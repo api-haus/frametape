@@ -1,5 +1,5 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
-use frametape::{Frame, Mark, TapeReader};
+use frametape::{Mark, TapeReader};
 use serde_json::json;
 use std::collections::{BTreeSet, hash_map::DefaultHasher};
 use std::fs;
@@ -7,24 +7,6 @@ use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-
-pub fn timeline(tape: &mut TapeReader) -> io::Result<Vec<Frame>> {
-    let mut frames = tape.frames()?;
-    for event in tape.events()? {
-        if event.channel == "video.frame" {
-            if let Some(index) = event.data["source_frame"].as_u64().or(event.frame) {
-                if let Some(frame) = frames.get_mut(index as usize) {
-                    frame.video_frame = if event.data["status"] == "captured" {
-                        event.data["video_frame"].as_u64()
-                    } else {
-                        None
-                    };
-                }
-            }
-        }
-    }
-    Ok(frames)
-}
 
 pub fn cache_key(path: &Path) -> io::Result<String> {
     let stat = fs::metadata(path)?;
@@ -120,7 +102,7 @@ pub fn media(path: &Path, cache: &Path) -> io::Result<Option<Media>> {
 
 pub fn image(path: &Path, frame: u64, cache: &Path) -> io::Result<Option<PathBuf>> {
     let mut tape = TapeReader::open(path)?;
-    let frames = timeline(&mut tape)?;
+    let frames = tape.frames()?;
     let frame = frames
         .get(frame as usize)
         .ok_or_else(|| io::Error::other("frame outside recording"))?;
@@ -274,7 +256,7 @@ pub fn export(
         return Err(io::Error::other("--every must exceed zero"));
     }
     let mut tape = TapeReader::open(path)?;
-    let frames = timeline(&mut tape)?;
+    let frames = tape.frames()?;
     let events = tape.events()?;
     let annotations = tape.annotations()?;
     let mut wanted = BTreeSet::new();

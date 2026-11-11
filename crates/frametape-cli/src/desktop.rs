@@ -160,7 +160,7 @@ pub fn record(options: Options) -> io::Result<()> {
         }
     }
     if let Some(mut frame) = pending {
-        frame.duration_ns = period.as_nanos() as u64;
+        frame.duration_ns = (monotonic_ns()? - epoch).saturating_sub(frame.timestamp_ns);
         writer.frame(&frame)?;
     }
     if let Some(input) = input {

@@ -88,7 +88,33 @@ fn run(cli: Cli) -> io::Result<()> {
             path,
             port,
             no_open,
-        } => app::serve(path, port, no_open),
+        } => {
+            let path = if path.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|e| e == "jsonl" || e == "brtake")
+            {
+                let output = path.with_extension("ftape");
+                if !output.is_file() {
+                    if path.extension().is_some_and(|e| e == "jsonl") {
+                        frametape::import::raycat(&path, &output)?;
+                    } else {
+                        let data = path.with_extension("data.json");
+                        if !data.is_file() {
+                            return Err(io::Error::other(format!(
+                                "missing {}: export frame JSON using the game's take tools, then open again",
+                                data.display()
+                            )));
+                        }
+                        frametape::import::ballrpg_export(&path, &data, &output)?;
+                    }
+                }
+                output
+            } else {
+                path
+            };
+            app::serve(path, port, no_open)
+        }
         Command::Inspect {
             path,
             frames,

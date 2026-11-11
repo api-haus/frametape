@@ -26,7 +26,7 @@ const size=n=>n>=1e9?(n/1e9).toFixed(1)+' GB':n>=1e6?(n/1e6).toFixed(1)+' MB':(n
 function draw(){
   const needle=$('search').value.toLowerCase(),order=$('sort').value;
   const visible=records.filter(r=>[r.name,...(r.labels||[]),...(r.manifest?.channels||[]).map(c=>c.id)].join(' ').toLowerCase().includes(needle));
-  visible.sort((a,b)=>order==='name'?a.name.localeCompare(b.name):order==='duration'?(b.manifest?.duration_ns||0)-(a.manifest?.duration_ns||0):order==='size'?b.bytes-a.bytes:order==='old'?a.modified_ms-b.modified_ms:b.modified_ms-a.modified_ms);
+  visible.sort((a,b)=>order==='name'?a.name.localeCompare(b.name):order==='duration'?(b.manifest?.duration_ns||0)-(a.manifest?.duration_ns||0):order==='size'?b.bytes-a.bytes:order==='old'?(a.manifest?.created_unix_ns||a.modified_ms*1e6)-(b.manifest?.created_unix_ns||b.modified_ms*1e6):(b.manifest?.created_unix_ns||b.modified_ms*1e6)-(a.manifest?.created_unix_ns||a.modified_ms*1e6));
   $('recordings').replaceChildren();
   for(const r of visible){
     const li=document.createElement('li'),button=document.createElement('button'),img=document.createElement('img'),text=document.createElement('span'),name=document.createElement('strong'),detail=document.createElement('small');

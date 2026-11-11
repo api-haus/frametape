@@ -118,7 +118,7 @@ pub fn serve(path: PathBuf, port: u16, no_open: bool) -> io::Result<()> {
         .ok_or_else(|| io::Error::other("missing bound address"))?;
     let origin = format!("http://{address}");
     let mut random = [0u8; 24];
-    File::open("/dev/urandom")?.read_exact(&mut random)?;
+    getrandom::fill(&mut random).map_err(|error| io::Error::other(error.to_string()))?;
     let token = random
         .iter()
         .map(|n| format!("{n:02x}"))
@@ -130,7 +130,17 @@ pub fn serve(path: PathBuf, port: u16, no_open: bool) -> io::Result<()> {
     );
     println!("{url}");
     if !no_open {
-        Command::new("xdg-open")
+        #[cfg(target_os = "macos")]
+        let mut opener = Command::new("open");
+        #[cfg(windows)]
+        let mut opener = {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "start", ""]);
+            command
+        };
+        #[cfg(all(not(windows), not(target_os = "macos")))]
+        let mut opener = Command::new("xdg-open");
+        opener
             .arg(&url)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -225,11 +235,11 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
         let mut tape = TapeReader::open(&path)?;
         match parts[0] {
             "take" => {
-                let frames = export::timeline(&mut tape)?;
+                let frames = tape.frames()?;
                 Ok((200,"application/json".into(),serde_json::to_vec(&json!({"manifest":tape.manifest,"frames":frames,"annotations":tape.annotations()?,"revision":revision(&path)?})).map_err(io::Error::other)?))
             }
             "review" => {
-                let frames = export::timeline(&mut tape)?;
+                let frames = tape.frames()?;
                 let marks = tape.annotations()?;
                 let data = json!({"stem":path.file_stem().unwrap().to_string_lossy(),"id":parts[1],"frames":frames.len(),"timeline":frames,"revision":revision(&path)?,"fps":tape.manifest.metadata["video_fps"].as_f64().unwrap_or(60.0)});
                 let html = include_str!("../../../app/annotator.html")

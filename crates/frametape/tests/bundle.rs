@@ -26,6 +26,7 @@ fn independent_channels_original_payload_and_annotations_survive_one_bundle() {
         ("input", "input"),
         ("physics.external", "physics"),
         ("profile", "profile"),
+        ("video.frame", "video"),
     ] {
         host.register(Channel {
             id: id.into(),
@@ -57,6 +58,15 @@ fn independent_channels_original_payload_and_annotations_survive_one_bundle() {
         data: json!({"scope":"step","duration_ns":2}),
     })
     .unwrap();
+    for (source, picture, status) in [(0, 0, "queued"), (1, 0, "repeated"), (0, 0, "captured")] {
+        host.event(&Event {
+            frame: Some(source),
+            timestamp_ns: source * 10,
+            channel: "video.frame".into(),
+            data: json!({"source_frame":source,"video_frame":picture,"status":status}),
+        })
+        .unwrap();
+    }
     let physics = [0, 255, 42, 0, 17];
     std::fs::write(dir.join("physics.bin"), physics).unwrap();
     host.attach(
@@ -103,6 +113,22 @@ fn independent_channels_original_payload_and_annotations_survive_one_bundle() {
         reopened.read("attachments/simulation.b3rec", 10).unwrap(),
         physics
     );
+    let mut damaged = std::fs::read(&path).unwrap();
+    let at = damaged
+        .windows(physics.len())
+        .position(|part| part == physics)
+        .unwrap();
+    damaged[at] ^= 1;
+    let corrupt = dir.join("corrupt.ftape");
+    std::fs::write(&corrupt, damaged).unwrap();
+    let extracted = dir.join("invalid-physics.b3rec");
+    assert!(
+        TapeReader::open(corrupt)
+            .unwrap()
+            .extract("attachments/simulation.b3rec", &extracted)
+            .is_err()
+    );
+    assert!(!extracted.exists());
     let other = dir.join("other");
     let mut independent = TapeWriter::create(other, json!({})).unwrap();
     independent

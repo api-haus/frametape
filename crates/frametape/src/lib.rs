@@ -428,20 +428,35 @@ impl TapeReader {
 
     pub fn extract(&mut self, name: &str, output: &Path) -> Result<()> {
         safe_name(name)?;
+        if output.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "extraction output exists",
+            ));
+        }
         let mut member = self.archive.by_name(name).map_err(invalid)?;
+        let mut temp = output.as_os_str().to_owned();
+        temp.push(".extracting");
+        let temp = PathBuf::from(temp);
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(output)?;
-        let bytes = io::copy(&mut member, &mut file)?;
-        if bytes != member.size() {
-            return Err(invalid("truncated attachment"));
-        }
-        file.sync_all()
+            .open(&temp)?;
+        let copied = (|| {
+            let bytes = io::copy(&mut member, &mut file)?;
+            if bytes != member.size() {
+                return Err(invalid("truncated attachment"));
+            }
+            file.sync_all()
+        })();
+        drop(file);
+        let result = copied.and_then(|_| fs::hard_link(&temp, output));
+        let removed = fs::remove_file(temp);
+        result.and(removed)
     }
 
     pub fn frames(&mut self) -> Result<Vec<Frame>> {
-        let frames: Vec<Frame> = self.lines("frames.jsonl")?;
+        let mut frames: Vec<Frame> = self.lines("frames.jsonl")?;
         if frames.len() as u64 != self.manifest.frame_count {
             return Err(invalid("frame count differs from manifest"));
         }
@@ -458,21 +473,81 @@ impl TapeReader {
             }
             last = frame.timestamp_ns;
         }
+        self.visit_events(|event| {
+            if event.channel == "video.frame" {
+                let index = event.data["source_frame"]
+                    .as_u64()
+                    .or(event.frame)
+                    .ok_or_else(|| invalid("video mapping lacks source frame"))?;
+                let index = usize::try_from(index).map_err(invalid)?;
+                let frame = frames
+                    .get_mut(index)
+                    .ok_or_else(|| invalid("video mapping references missing source frame"))?;
+                frame.video_frame = if event.data["status"] == "captured" {
+                    Some(
+                        event.data["video_frame"]
+                            .as_u64()
+                            .ok_or_else(|| invalid("captured mapping lacks picture index"))?,
+                    )
+                } else {
+                    None
+                };
+            }
+            Ok(())
+        })?;
         Ok(frames)
     }
+
     pub fn events(&mut self) -> Result<Vec<Event>> {
-        let events: Vec<Event> = self.lines("events.jsonl")?;
-        if events.len() as u64 != self.manifest.event_count {
-            return Err(invalid("event count differs from manifest"));
+        if self
+            .archive
+            .by_name("events.jsonl")
+            .map_err(invalid)?
+            .size()
+            > 256 * 1024 * 1024
+        {
+            return Err(invalid(
+                "event stream exceeds in-memory limit; use visit_events",
+            ));
         }
-        for event in &events {
+        let mut events = Vec::new();
+        self.visit_events(|event| {
+            events.push(event);
+            Ok(())
+        })?;
+        Ok(events)
+    }
+
+    /// Visits long event streams without retaining unrelated channel payloads.
+    pub fn visit_events(&mut self, mut visit: impl FnMut(Event) -> Result<()>) -> Result<()> {
+        let member = self.archive.by_name("events.jsonl").map_err(invalid)?;
+        let mut reader = BufReader::new(member);
+        let mut count = 0;
+        loop {
+            let mut line = Vec::new();
+            let bytes = reader
+                .by_ref()
+                .take(JSON_LIMIT + 1)
+                .read_until(b'\n', &mut line)?;
+            if bytes == 0 {
+                break;
+            }
+            if bytes as u64 > JSON_LIMIT {
+                return Err(invalid("event record exceeds size limit"));
+            }
+            let event: Event = serde_json::from_slice(&line).map_err(invalid)?;
             if event.frame.is_some_and(|f| f >= self.manifest.frame_count)
                 || !self.manifest.channels.iter().any(|c| c.id == event.channel)
             {
                 return Err(invalid("event references missing channel/frame"));
             }
+            visit(event)?;
+            count += 1;
         }
-        Ok(events)
+        if count != self.manifest.event_count {
+            return Err(invalid("event count differs from manifest"));
+        }
+        Ok(())
     }
 
     pub fn lines<T: serde::de::DeserializeOwned>(&mut self, name: &str) -> Result<Vec<T>> {
@@ -487,10 +562,18 @@ impl TapeReader {
         if !self.archive.file_names().any(|n| n == "annotations.json") {
             return Ok(Annotations::default());
         }
-        Annotations::parse(
+        let annotations = Annotations::parse(
             std::str::from_utf8(&self.read("annotations.json", JSON_LIMIT)?).map_err(invalid)?,
         )
-        .map_err(invalid)
+        .map_err(invalid)?;
+        if annotations
+            .containers
+            .iter()
+            .any(|c| c.end_frame >= self.manifest.frame_count)
+        {
+            return Err(invalid("annotation references missing source frame"));
+        }
+        Ok(annotations)
     }
 }
 
