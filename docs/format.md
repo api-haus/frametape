@@ -17,6 +17,11 @@ for that source frame. Repeated pictures use producer `video.frame` events with
 Never derive source frame from video seconds. Source timing may be variable while video
 is CFR; the review playhead follows source timestamps.
 
+The shared reader resolves final `video.frame` records into its returned frames. Only
+`captured` confirms a fresh picture; `queued`, `repeated`, busy and unavailable states do
+not. Original records remain available in the event stream. `visit_events` streams long
+channels without retaining every payload in memory.
+
 Desktop evdev event timestamps use `EVIOCSCLOCKID(CLOCK_MONOTONIC)`. Compositor ready
 timestamps are checked against monotonic request/receive bounds; incompatible epochs fail.
 The capture channel records the absolute epoch ns and actual encoding settings. No claimed
@@ -32,6 +37,14 @@ Writer publication refuses existing output and uses a sibling temporary file plu
 hard link. Successful publication removes known journal members only. Annotation writes
 copy original members without re-encoding and atomically replace the archive; failed writes
 preserve original evidence. Local editor requests include a revision and reject stale edits.
+`edit_annotations` acquires the stable sibling `.annotations.lock` before reading the
+canonical document and invoking the caller's checked edit. Native and standalone editors
+share this transaction. Existing file permissions survive replacement.
+
+Recovery leaves the original journal intact. Pending desktop input is merged into the
+recovered event stream; unfinished video and accepted mappings remain original attachments
+marked unverified. Out-of-coverage event bindings become unbound, with their original
+records attached. A recovered take explicitly reports incomplete coverage.
 
 Annotations preserve the Raycat version-2 geometry: rectangle/ellipse corners, arrow ends,
 stroke polylines and text anchors; colors are sRGB triples, stroke/text sizes are fractions

@@ -281,6 +281,11 @@ pub fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
         .create_new(true)
         .open(&temp)?;
     let result = (|| {
+        match fs::metadata(path) {
+            Ok(metadata) => file.set_permissions(metadata.permissions())?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error),
+        }
         serde_json::to_writer_pretty(&mut file, value).map_err(invalid)?;
         file.write_all(b"\n")?;
         file.sync_all()?;
@@ -579,7 +584,27 @@ impl TapeReader {
 
 /// Replaces annotations inside the single bundle; original remains intact on write failure.
 pub fn save_annotations(path: &Path, annotations: &Annotations) -> Result<()> {
+    edit_annotations(path, |_| Ok(annotations.clone()))
+}
+
+/// Locks before reading the canonical document, so callers can reject stale edits atomically.
+pub fn edit_annotations(
+    path: &Path,
+    edit: impl FnOnce(Annotations) -> Result<Annotations>,
+) -> Result<()> {
+    let canonical = fs::canonicalize(path)?;
+    let path = canonical.as_path();
+    let mut lock_path = path.as_os_str().to_owned();
+    lock_path.push(".annotations.lock");
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(PathBuf::from(lock_path))?;
+    lock.lock()?;
     let mut source = TapeReader::open(path)?;
+    let annotations = edit(source.annotations()?)?;
     annotations.validate().map_err(invalid)?;
     let frames = source.manifest.frame_count;
     if annotations.version != 2
@@ -597,6 +622,7 @@ pub fn save_annotations(path: &Path, annotations: &Annotations) -> Result<()> {
         .create_new(true)
         .open(&temp)?;
     let result = (|| {
+        file.set_permissions(fs::metadata(path)?.permissions())?;
         let mut target = ZipWriter::new(file);
         for i in 0..source.archive.len() {
             let member = source.archive.by_index(i).map_err(invalid)?;
@@ -607,7 +633,7 @@ pub fn save_annotations(path: &Path, annotations: &Annotations) -> Result<()> {
         target
             .start_file("annotations.json", options("annotations.json", 0))
             .map_err(invalid)?;
-        serde_json::to_writer(&mut target, annotations).map_err(invalid)?;
+        serde_json::to_writer(&mut target, &annotations).map_err(invalid)?;
         target.finish().map_err(invalid)?.sync_all()?;
         fs::rename(&temp, path)
     })();

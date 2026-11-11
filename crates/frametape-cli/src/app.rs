@@ -281,16 +281,27 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
                     return Err(io::Error::other("annotation document exceeds 8 MiB"));
                 }
                 let data: Value = serde_json::from_slice(&data).map_err(io::Error::other)?;
-                if data["revision"].as_str() != Some(revision(&path)?.as_str()) {
+                let annotations: Annotations = serde_json::from_value(data["annotations"].clone())
+                    .map_err(io::Error::other)?;
+                let mut stale = false;
+                let saved = frametape::edit_annotations(&path, |_| {
+                    if data["revision"].as_str() != Some(revision(&path)?.as_str()) {
+                        stale = true;
+                        return Err(io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            "annotation revision changed",
+                        ));
+                    }
+                    Ok(annotations)
+                });
+                if stale {
                     return Ok((
                         409,
                         "text/plain".into(),
                         b"Recording changed in another editor. Reload before saving.".to_vec(),
                     ));
                 }
-                let annotations: Annotations = serde_json::from_value(data["annotations"].clone())
-                    .map_err(io::Error::other)?;
-                frametape::save_annotations(&path, &annotations)?;
+                saved?;
                 Ok((
                     200,
                     "application/json".into(),

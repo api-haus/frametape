@@ -1,0 +1,82 @@
+{
+  "app": {
+    "frames": 116,
+    "accepted_pictures": 116,
+    "input_actions": 92,
+    "save_status": "Saved in recording"
+  },
+  "edges": {
+    "missing_and_stale": {
+      "clock": "Frame 1 / 2 \u00b7 1.000 s",
+      "coverage": "No captured image for this frame",
+      "video": "hidden",
+      "still": "hidden",
+      "status": "Save failed: Recording changed in another editor. Reload before saving."
+    },
+    "draft_preserved": true
+  },
+  "browser": {
+    "frames": 16,
+    "events": 159,
+    "archive_bytes": 53788,
+    "video_bytes": 26033,
+    "typed": "Frame sync: 100% readable",
+    "mapping": "all source frames have confirmed encoded pictures",
+    "input_producer": "public web/input.js"
+  },
+  "unreal": {
+    "sdk_sha256": "8e8676c3921632b4aecd2527e6d1b4f3815680cde4dc1e024eb45a0cb1838a9d",
+    "process_exit": 0,
+    "frames": 8,
+    "captured_mappings": 8,
+    "mapping_errors": 0,
+    "fps": 30,
+    "input_enabled": false,
+    "probe": {
+      "codec_name": "hevc",
+      "profile": "Rext",
+      "width": 640,
+      "height": 360,
+      "pix_fmt": "yuv444p",
+      "avg_frame_rate": "30/1",
+      "nb_read_frames": "8",
+      "tags": {
+        "encoder": "Lavc63.1.101 hevc_nvenc"
+      }
+    },
+    "archive_bytes": 7052,
+    "export_png_count": 8,
+    "export_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "visual_checks": {
+      "frame_0": "readable matching caption 0",
+      "frame_3": "readable matching caption 3",
+      "frame_7": "readable matching caption 7"
+    },
+    "video_bytes": 5742,
+    "clip_sha256": "3f920e48c453c995a0e753b1c1c2bc8599ec0d24bdbac89f196ea1f493ffa561"
+  },
+  "desktop": {
+    "width_px": 3840,
+    "height_px": 2160,
+    "requested_fps": 30,
+    "source_frames": 79,
+    "encoded_pictures": 72,
+    "source_duration_s": 3.00956473,
+    "encoder": "hevc_nvenc",
+    "hardware": true,
+    "chroma": "4:4:4",
+    "input_events": 85,
+    "input_devices": 34,
+    "lost_input_packets": 0,
+    "footage": "private; not published"
+  }
+}

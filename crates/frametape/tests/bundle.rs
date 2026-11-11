@@ -109,6 +109,42 @@ fn independent_channels_original_payload_and_annotations_survive_one_bundle() {
     frametape::save_annotations(&path, &annotations).unwrap();
     let mut reopened = TapeReader::open(&path).unwrap();
     assert_eq!(reopened.annotations().unwrap(), annotations);
+    let base = annotations.clone();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let mut external = annotations.clone();
+    external.containers[0].marks.push(Mark::Text {
+        at: [0.1, 0.1],
+        text: "external editor".into(),
+        size: 0.035,
+        colour: [255, 72, 72],
+    });
+    frametape::save_annotations(&path, &external).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    let stale = frametape::edit_annotations(&path, |current| {
+        if current != base {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "stale editor",
+            ));
+        }
+        Ok(Annotations::default())
+    });
+    assert!(stale.is_err());
+    assert_eq!(
+        TapeReader::open(&path).unwrap().annotations().unwrap(),
+        external
+    );
     assert_eq!(
         reopened.read("attachments/simulation.b3rec", 10).unwrap(),
         physics
