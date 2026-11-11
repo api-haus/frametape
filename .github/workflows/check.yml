@@ -1,0 +1,15 @@
+name: check
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - run: cargo fmt --all -- --check
+      - run: cargo test --workspace --locked

@@ -1,0 +1,16 @@
+[package]
+rust-version.workspace = true
+name = "frametape-ffi"
+description = "C ABI for FramETape recording and hardware video encoding"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+frametape.workspace = true
+frametape-video.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,27 @@
+[package]
+rust-version.workspace = true
+name = "frametape-cli"
+description = "Desktop recording, annotation, catalog and agent inspection for FramETape"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "frametape"
+path = "src/main.rs"
+
+[dependencies]
+frametape.workspace = true
+frametape-video.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap = { version = "4.6", features = ["derive"] }
+tiny_http = "0.12"
+ctrlc = { version = "3.5", features = ["termination"] }
+libc = "0.2"
+base64 = "0.22"
+resvg = "0.45"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+frametape-desktop = { version = "0.1.0", path = "../frametape-desktop" }

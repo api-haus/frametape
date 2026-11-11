@@ -1,0 +1,8 @@
+[package]
+rust-version.workspace = true
+name = "frametape-video"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/api-haus/frametape"
+description = "Bounded asynchronous hardware video encoding for frame-indexed recordings"

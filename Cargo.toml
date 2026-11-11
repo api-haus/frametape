@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/frametape", "crates/frametape-video", "crates/frametape-cli", "crates/frametape-ffi", "crates/frametape-desktop"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+repository = "https://github.com/api-haus/frametape"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+frametape = { version = "0.1.0", path = "crates/frametape" }
+frametape-video = { version = "0.1.0", path = "crates/frametape-video" }
+

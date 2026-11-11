@@ -1,0 +1,338 @@
+use base64::{Engine, engine::general_purpose::STANDARD};
+use frametape::{Frame, Mark, TapeReader};
+use serde_json::json;
+use std::collections::{BTreeSet, hash_map::DefaultHasher};
+use std::fs;
+use std::hash::{Hash, Hasher};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+pub fn timeline(tape: &mut TapeReader) -> io::Result<Vec<Frame>> {
+    let mut frames = tape.frames()?;
+    for event in tape.events()? {
+        if event.channel == "video.frame" {
+            if let Some(index) = event.data["source_frame"].as_u64().or(event.frame) {
+                if let Some(frame) = frames.get_mut(index as usize) {
+                    frame.video_frame = if event.data["status"] == "captured" {
+                        event.data["video_frame"].as_u64()
+                    } else {
+                        None
+                    };
+                }
+            }
+        }
+    }
+    Ok(frames)
+}
+
+pub fn cache_key(path: &Path) -> io::Result<String> {
+    let stat = fs::metadata(path)?;
+    let mut hash = DefaultHasher::new();
+    path.hash(&mut hash);
+    stat.len().hash(&mut hash);
+    stat.modified()?.hash(&mut hash);
+    Ok(format!("{:016x}", hash.finish()))
+}
+
+pub struct Media {
+    pub path: PathBuf,
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+}
+
+pub fn media(path: &Path, cache: &Path) -> io::Result<Option<Media>> {
+    let mut tape = TapeReader::open(path)?;
+    let candidates = tape
+        .manifest
+        .attachments
+        .iter()
+        .filter(|a| a.media_type.starts_with("video/"))
+        .collect::<Vec<_>>();
+    let attachment = candidates
+        .iter()
+        .find(|a| a.media_type == "video/mp4")
+        .or(candidates.first())
+        .cloned()
+        .cloned();
+    let Some(attachment) = attachment else {
+        return Ok(None);
+    };
+    let extension = Path::new(&attachment.path)
+        .extension()
+        .and_then(|x| x.to_str())
+        .filter(|x| ["mp4", "mkv", "webm", "h264"].contains(x))
+        .unwrap_or("video");
+    let (crc, bytes) = tape.member_fingerprint(&attachment.path)?;
+    let mut hash = DefaultHasher::new();
+    path.hash(&mut hash);
+    attachment.path.hash(&mut hash);
+    crc.hash(&mut hash);
+    bytes.hash(&mut hash);
+    let folder = cache.join(format!("{:016x}", hash.finish()));
+    fs::create_dir_all(&folder)?;
+    let source = folder.join(format!("original.{extension}"));
+    if !source.exists() {
+        tape.extract(&attachment.path, &source)?;
+    }
+    let result = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,r_frame_rate",
+            "-of",
+            "json",
+        ])
+        .arg(&source)
+        .stdin(Stdio::null())
+        .output()?;
+    if !result.status.success() {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&result.stderr).into_owned(),
+        ));
+    }
+    let info: serde_json::Value =
+        serde_json::from_slice(&result.stdout).map_err(io::Error::other)?;
+    let stream = &info["streams"][0];
+    let width = stream["width"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or_else(|| io::Error::other("missing video width"))?;
+    let height = stream["height"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or_else(|| io::Error::other("missing video height"))?;
+    let fps = tape.manifest.metadata["video_fps"].as_f64().unwrap_or(60.0);
+    if !fps.is_finite() || fps <= 0.0 || width == 0 || height == 0 {
+        return Err(io::Error::other("invalid video dimensions/rate"));
+    }
+    Ok(Some(Media {
+        path: source,
+        width,
+        height,
+        fps,
+    }))
+}
+
+pub fn image(path: &Path, frame: u64, cache: &Path) -> io::Result<Option<PathBuf>> {
+    let mut tape = TapeReader::open(path)?;
+    let frames = timeline(&mut tape)?;
+    let frame = frames
+        .get(frame as usize)
+        .ok_or_else(|| io::Error::other("frame outside recording"))?;
+    let Some(index) = frame.video_frame else {
+        return Ok(None);
+    };
+    let Some(media) = media(path, cache)? else {
+        return Ok(None);
+    };
+    let output = media
+        .path
+        .parent()
+        .unwrap()
+        .join(format!("frame-{index}.png"));
+    if !output.exists() {
+        let result = Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-n", "-threads", "2"])
+            .arg("-i")
+            .arg(&media.path)
+            .args([
+                "-vf",
+                &format!("select=eq(n\\,{index})"),
+                "-fps_mode",
+                "passthrough",
+                "-frames:v",
+                "1",
+                "-threads",
+                "1",
+            ])
+            .arg(&output)
+            .stdin(Stdio::null())
+            .output()?;
+        if !result.status.success() {
+            return Err(io::Error::other(
+                String::from_utf8_lossy(&result.stderr).into_owned(),
+            ));
+        }
+        if !output.is_file() {
+            return Err(io::Error::other("video ends before mapped picture"));
+        }
+    }
+    Ok(Some(output))
+}
+
+fn escaped(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn burn(
+    raw: &Path,
+    output: &Path,
+    width: u32,
+    height: u32,
+    marks: impl Iterator<Item = Mark>,
+) -> io::Result<()> {
+    let mut svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{width}\" height=\"{height}\"><image width=\"{width}\" height=\"{height}\" xlink:href=\"data:image/png;base64,{}\"/>",
+        STANDARD.encode(fs::read(raw)?)
+    );
+    let w = width as f64;
+    let h = height as f64;
+    let short = w.min(h);
+    for mark in marks {
+        let [r, g, b] = mark.colour();
+        let ink = format!("rgb({r},{g},{b})");
+        let stroke = f64::from(mark.width()) * short;
+        let style = format!(
+            "fill=\"none\" stroke=\"{ink}\" stroke-width=\"{}\" stroke-linecap=\"round\" stroke-linejoin=\"round\"",
+            stroke.max(1.0)
+        );
+        match mark {
+            Mark::Rectangle { a, b, .. } => {
+                svg += &format!(
+                    "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" {style}/>",
+                    f64::from(a[0].min(b[0])) * w,
+                    f64::from(a[1].min(b[1])) * h,
+                    f64::from((b[0] - a[0]).abs()) * w,
+                    f64::from((b[1] - a[1]).abs()) * h
+                )
+            }
+            Mark::Ellipse { a, b, .. } => {
+                svg += &format!(
+                    "<ellipse cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\" {style}/>",
+                    f64::from((a[0] + b[0]) / 2.0) * w,
+                    f64::from((a[1] + b[1]) / 2.0) * h,
+                    f64::from((b[0] - a[0]).abs()) * w / 2.0,
+                    f64::from((b[1] - a[1]).abs()) * h / 2.0
+                )
+            }
+            Mark::Stroke { points, .. } => {
+                let points = points
+                    .iter()
+                    .map(|p| format!("{},{}", f64::from(p[0]) * w, f64::from(p[1]) * h))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                svg += &format!("<polyline points=\"{points}\" {style}/>");
+            }
+            Mark::Arrow { from, to, .. } => {
+                let (ax, ay, bx, by) = (
+                    f64::from(from[0]) * w,
+                    f64::from(from[1]) * h,
+                    f64::from(to[0]) * w,
+                    f64::from(to[1]) * h,
+                );
+                let angle = (by - ay).atan2(bx - ax);
+                let length = short * 0.03;
+                svg += &format!(
+                    "<path d=\"M{ax},{ay} L{bx},{by} M{},{} L{bx},{by} L{},{}\" {style}/>",
+                    bx - length * (angle - 0.5).cos(),
+                    by - length * (angle - 0.5).sin(),
+                    bx - length * (angle + 0.5).cos(),
+                    by - length * (angle + 0.5).sin()
+                );
+            }
+            Mark::Text { at, text, size, .. } => {
+                svg += &format!(
+                    "<text x=\"{}\" y=\"{}\" font-family=\"sans-serif\" font-weight=\"600\" font-size=\"{}\" dominant-baseline=\"middle\" fill=\"{ink}\" stroke=\"black\" stroke-width=\"1\" paint-order=\"stroke\">{}</text>",
+                    f64::from(at[0]) * w,
+                    f64::from(at[1]) * h,
+                    f64::from(size) * short,
+                    escaped(&text)
+                )
+            }
+        }
+    }
+    svg += "</svg>";
+    let mut options = resvg::usvg::Options::default();
+    options.fontdb_mut().load_system_fonts();
+    let tree = resvg::usvg::Tree::from_str(&svg, &options).map_err(io::Error::other)?;
+    let mut pixels = resvg::tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| io::Error::other("image size invalid"))?;
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::identity(),
+        &mut pixels.as_mut(),
+    );
+    pixels.save_png(output).map_err(io::Error::other)
+}
+
+pub fn export(
+    path: &Path,
+    output: &Path,
+    requested: &[u64],
+    every: Option<u64>,
+    list: bool,
+) -> io::Result<()> {
+    if every == Some(0) {
+        return Err(io::Error::other("--every must exceed zero"));
+    }
+    let mut tape = TapeReader::open(path)?;
+    let frames = timeline(&mut tape)?;
+    let events = tape.events()?;
+    let annotations = tape.annotations()?;
+    let mut wanted = BTreeSet::new();
+    if !requested.is_empty() {
+        wanted.extend(requested.iter().copied());
+    } else if let Some(every) = every {
+        wanted.extend(
+            (0..frames.len() as u64).step_by(usize::try_from(every).map_err(io::Error::other)?),
+        );
+    } else {
+        for container in &annotations.containers {
+            wanted.extend([
+                container.start_frame,
+                (container.start_frame + container.end_frame) / 2,
+                container.end_frame,
+            ]);
+        }
+    }
+    if wanted.iter().any(|f| *f >= frames.len() as u64) {
+        return Err(io::Error::other("requested frame exceeds recording"));
+    }
+    fs::create_dir(output)?;
+    let cache = output.join("source");
+    let media = if list { None } else { media(path, &cache)? };
+    let mut rows = Vec::new();
+    for index in wanted {
+        let frame = &frames[index as usize];
+        let marks = annotations.marks(index).cloned().collect::<Vec<_>>();
+        let mut png = None;
+        if !list {
+            if let (Some(raw), Some(media)) = (image(path, index, &cache)?, &media) {
+                let file = output.join(format!("frame-{index:06}.png"));
+                if marks.is_empty() {
+                    fs::copy(raw, &file)?;
+                } else {
+                    burn(&raw, &file, media.width, media.height, marks.into_iter())?;
+                }
+                png = Some(file.file_name().unwrap().to_string_lossy().into_owned());
+            }
+        }
+        let data = events
+            .iter()
+            .filter(|event| {
+                event.frame == Some(index)
+                    || (event.frame.is_none()
+                        && frametape::frame_at(&frames, event.timestamp_ns)
+                            .is_some_and(|f| f.index == index))
+            })
+            .collect::<Vec<_>>();
+        rows.push(json!({"frame":frame,"image":png,"events":data,"annotations":annotations.covering(index).collect::<Vec<_>>()}));
+    }
+    frametape::atomic_json(
+        &output.join("manifest.json"),
+        &json!({"recording":tape.manifest,"source":std::path::absolute(path)?,"annotations":annotations,"frames":rows}),
+    )?;
+    println!(
+        "{}",
+        std::path::absolute(output.join("manifest.json"))?.display()
+    );
+    Ok(())
+}

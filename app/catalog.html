@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frametape · recordings</title>
+<style>
+:root{color-scheme:dark;--bg:#101216;--panel:#1b1e24;--line:#323844;--fg:#e4e7ec;--dim:#a8afbb;--accent:#ffb53d}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 system-ui,sans-serif;height:100dvh;display:grid;grid-template-rows:50px 1fr;overflow:hidden}
+header{display:flex;align-items:center;padding:0 18px;border-bottom:1px solid var(--line);gap:24px}h1{font-size:17px;margin:0;font-weight:650;letter-spacing:-.02em}header span{color:var(--dim)}header button{margin-left:auto}
+main{display:grid;grid-template-columns:270px minmax(240px,1fr) 290px;min-height:0}aside{background:var(--panel);overflow:auto}#library{border-right:1px solid var(--line)}#details{border-left:1px solid var(--line);padding:16px}#controls{padding:14px 12px;position:sticky;top:0;background:var(--panel);z-index:1;border-bottom:1px solid var(--line)}label{display:block;font-size:12px;color:var(--dim);margin-bottom:5px}input,select,button{font:inherit;color:var(--fg);background:#262b33;border:1px solid var(--line);border-radius:4px;padding:7px 9px}input{width:100%;margin-bottom:10px}select{width:100%}button{cursor:pointer}button:hover{background:#39404c}button:disabled{opacity:.5;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}::selection{background:var(--accent);color:var(--bg)}input{caret-color:var(--accent)}*{scrollbar-color:#59616f var(--panel);scrollbar-width:thin}
+#recordings{padding:0;margin:0;list-style:none}.take{display:grid;grid-template-columns:78px minmax(0,1fr);gap:10px;text-align:left;width:100%;border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent;padding:13px 12px}.take[aria-current=true]{background:#34302a}.take img{width:78px;height:46px;object-fit:contain;background:#101216}.take strong{display:block;overflow-wrap:anywhere;font-size:12px;font-weight:600}.take small{display:block;color:var(--dim);margin-top:4px;font-size:11px;font-variant-numeric:tabular-nums}#viewer{min-width:0;position:relative}iframe{width:100%;height:100%;border:0;display:none}#empty{height:100%;display:grid;place-content:center;padding:40px;max-width:65ch;margin:auto}#empty h2{font-size:24px;letter-spacing:-.02em;font-weight:600;margin:0 0 12px}#empty p{color:var(--dim);margin:0;max-width:48ch}h2{font-size:13px;font-weight:600;margin:0 0 12px}dl{display:grid;grid-template-columns:auto 1fr;gap:7px 12px;margin:0 0 24px;font-variant-numeric:tabular-nums}dt{color:var(--dim)}dd{margin:0;overflow-wrap:anywhere}#channels{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 24px}#channels span{padding:3px 7px;background:#262b33;border-radius:3px;font-size:11px}pre{font:11px/1.5 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:55vh;overflow:auto;margin:0;color:#cad1dc}.notice{color:var(--dim);font-size:12px;padding:14px}#notice{color:var(--dim);font-size:12px}#frame-label{font-variant-numeric:tabular-nums}#toggle{display:none}@media(max-width:1150px){main{grid-template-columns:230px minmax(240px,1fr)}#details{display:none;position:absolute;right:0;top:50px;bottom:0;width:290px;z-index:4}#details.open{display:block}#toggle{display:block}}@media(max-width:680px){main{grid-template-columns:170px minmax(170px,1fr)}header{padding:0 12px;gap:12px}header span{display:none}.take{grid-template-columns:1fr;padding:10px}.take img{width:100%;height:72px}#controls{padding:10px}#empty{padding:20px}#empty h2{font-size:18px}}
+</style>
+<header><h1>Frametape</h1><span id="count">Recordings</span><button id="refresh">Refresh folder</button><button id="toggle" aria-expanded="false">Frame data</button></header>
+<main>
+  <aside id="library" aria-label="Recording library">
+    <div id="controls"><label for="search">Find recordings</label><input id="search" type="search" placeholder="Name, annotation, channel…"><label for="sort">Sort recordings</label><select id="sort"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="name">Name</option><option value="duration">Longest first</option><option value="size">Largest first</option></select></div>
+    <ul id="recordings"></ul><p id="notice" class="notice" role="status"></p>
+  </aside>
+  <section id="viewer" aria-label="Recording review"><div id="empty"><h2>Keep the moment.<br>Explain what happened.</h2><p>Select a recording to inspect original frames, draw annotations, and follow its synchronized events. Changes save inside the recording.</p></div><iframe id="review" title="Frame annotation editor"></iframe></section>
+  <aside id="details" aria-label="Synchronized frame data"><h2>Recording</h2><dl id="metadata"></dl><h2>Channels</h2><div id="channels"></div><h2 id="frame-label">Frame events</h2><pre id="events">Select a recording.</pre></aside>
+</main>
+<script>
+const $=id=>document.getElementById(id), BASE=new URL('./',location.href);
+let records=[],selected=null,timer;
+const size=n=>n>=1e9?(n/1e9).toFixed(1)+' GB':n>=1e6?(n/1e6).toFixed(1)+' MB':(n/1e3).toFixed(1)+' KB';
+function draw(){
+  const needle=$('search').value.toLowerCase(),order=$('sort').value;
+  const visible=records.filter(r=>[r.name,...(r.labels||[]),...(r.manifest?.channels||[]).map(c=>c.id)].join(' ').toLowerCase().includes(needle));
+  visible.sort((a,b)=>order==='name'?a.name.localeCompare(b.name):order==='duration'?(b.manifest?.duration_ns||0)-(a.manifest?.duration_ns||0):order==='size'?b.bytes-a.bytes:order==='old'?a.modified_ms-b.modified_ms:b.modified_ms-a.modified_ms);
+  $('recordings').replaceChildren();
+  for(const r of visible){
+    const li=document.createElement('li'),button=document.createElement('button'),img=document.createElement('img'),text=document.createElement('span'),name=document.createElement('strong'),detail=document.createElement('small');
+    button.className='take';button.setAttribute('aria-current',String(r.id===selected));button.disabled=!!r.error;
+    img.alt='';img.loading='lazy';img.src=new URL('preview/'+r.id+'/0',BASE);img.onerror=()=>{img.style.visibility='hidden'};
+    name.textContent=r.name;detail.textContent=r.error?'Unreadable · '+r.error:`${(r.manifest.duration_ns/1e9).toFixed(1)} s · ${r.manifest.frame_count} frames · ${size(r.bytes)}`;
+    text.append(name,detail);button.append(img,text);button.onclick=()=>open(r);li.append(button);$('recordings').append(li);
+  }
+  $('count').textContent=records.length+' recording'+(records.length===1?'':'s');
+  $('notice').textContent=records.length===0?'No .ftape files in this folder. Record or import a take, then refresh.':visible.length===0?'No recordings match. Try a different search.':'';
+}
+function open(r){
+  selected=r.id;draw();$('empty').style.display='none';$('review').style.display='block';$('review').src=new URL('review/'+r.id,BASE);
+  const url=new URL(location.href);url.searchParams.set('take',r.id);history.replaceState(null,'',url);
+  const m=r.manifest;const data={'Host':m.metadata.host||'Custom','Duration':(m.duration_ns/1e9).toFixed(3)+' s','Frames':m.frame_count,'Events':m.event_count,'Size':size(r.bytes),'ID':m.id};
+  $('metadata').replaceChildren();for(const [key,value] of Object.entries(data)){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=key;dd.textContent=value;$('metadata').append(dt,dd)}
+  $('channels').replaceChildren();for(const c of m.channels){const span=document.createElement('span');span.textContent=c.id;span.title=c.schema;$('channels').append(span)}
+  $('events').textContent='Loading frame events…';
+}
+async function refresh(){
+  $('refresh').disabled=true;$('notice').textContent='Reading recordings…';
+  try{const response=await fetch(new URL('catalog',BASE));if(!response.ok)throw new Error(await response.text());records=await response.json();draw();const first=new URL(location.href).searchParams.get('take');if(!selected&&first){const r=records.find(r=>r.id===first&&!r.error);if(r)open(r)}}
+  catch(e){$('notice').textContent='Cannot read folder: '+e.message}finally{$('refresh').disabled=false}
+}
+addEventListener('message',event=>{
+  if(event.origin!==location.origin||event.source!==$('review').contentWindow||event.data?.type!=='frame'||event.data.id!==selected)return;
+  const index=event.data.frame;$('frame-label').textContent=index==null?'Channel events':'Frame '+index+' · events';clearTimeout(timer);
+  timer=setTimeout(async()=>{try{const response=await fetch(new URL('events/'+selected+'/'+index,BASE));if(!response.ok)throw new Error(await response.text());const events=await response.json();$('events').textContent=events.length?JSON.stringify(events,null,2):'No channel events in this frame interval.'}catch(e){$('events').textContent=e.message}},100);
+});
+$('search').oninput=draw;$('sort').onchange=draw;$('refresh').onclick=refresh;
+$('toggle').onclick=()=>{const open=$('details').classList.toggle('open');$('toggle').setAttribute('aria-expanded',String(open))};
+refresh();
+</script>
+</html>
