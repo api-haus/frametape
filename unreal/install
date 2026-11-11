@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Usage: unreal/install PROJECT-DIRECTORY [--debug]
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+project=${1:?project directory or .uproject required}
+[ -f "$project" ] && project=$(dirname "$project")
+project=$(realpath "$project")
+profile=release
+args=(--release)
+if [ "${2:-}" = --debug ]; then profile=debug; args=(); fi
+frametape_admission=()
+if command -v processqueue >/dev/null 2>&1; then frametape_admission=(processqueue cpu); fi
+(cd "$root" && "${frametape_admission[@]}" cargo build -p frametape-ffi "${args[@]}")
+case $(uname -s) in
+    Linux) platform=Linux; library=libframetape_ffi.a ;;
+    Darwin) platform=Mac; library=libframetape_ffi.a ;;
+    *) echo 'Build frametape-ffi for Win64 and install its static library manually.' >&2; exit 2 ;;
+esac
+[ -s "$root/target/$profile/$library" ]
+dest="$project/Plugins/Frametape"
+mkdir -p "$dest/Source/ThirdParty/include" "$dest/Source/ThirdParty/lib/$platform"
+cp -a "$root/unreal/Frametape/." "$dest/"
+cp "$root/include/frametape.h" "$dest/Source/ThirdParty/include/"
+cp "$root/target/$profile/$library" "$dest/Source/ThirdParty/lib/$platform/"
+echo "Installed Frametape in $dest ($profile)"

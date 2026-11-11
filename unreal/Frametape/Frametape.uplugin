@@ -1,0 +1,12 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Frametape",
+  "Description": "Frame-indexed video, input and diagnostic recording.",
+  "Category": "Debugging",
+  "CreatedBy": "api-haus",
+  "CanContainContent": false,
+  "EnabledByDefault": false,
+  "Modules": [{ "Name": "Frametape", "Type": "Runtime", "LoadingPhase": "Default", "PlatformDenyList": ["HTML5"] }]
+}
