@@ -22,16 +22,33 @@ migration preserving existing features; public MIT repository under api-haus.
 
 ## Acceptance
 
-- [ ] Bundle contracts and corruption/path validation; interrupted recording journal retained.
-- [ ] Hardware video encoder with explicit actual settings, bounded queue and failure feedback.
-- [ ] Desktop capture and all selected evdev events sharing monotonic frame clock.
-- [ ] CLI inspect/extract/import and annotation packet export.
-- [ ] Folder catalog, preview, sorting, frame stepping, marks/ranges, persistence.
-- [ ] Reusable Rust/C ABI/Unreal/browser producers and example consumers.
-- [ ] Raycat migration and real applicable gate.
-- [ ] BallRPG migration, native/browser verification.
-- [ ] Real capture/input/UI proof; codec readability checked, limitations recorded.
-- [ ] Public source audit, MIT attribution, GitHub publication and remote verdict.
+- [x] Bundle contracts and corruption/path validation; interrupted recording journal retained.
+- [x] Hardware video encoder with explicit actual settings, bounded queue and failure feedback.
+- [x] Desktop capture and all selected evdev events sharing monotonic frame clock.
+- [x] CLI inspect/extract/import and annotation packet export.
+- [x] Folder catalog, preview, sorting, frame stepping, marks/ranges, persistence.
+- [x] Reusable Rust/C ABI/Unreal/browser producers and example consumers.
+- [x] Raycat migration and real applicable gate.
+- [x] BallRPG migration, native/browser verification.
+- [x] Real capture/input/UI proof; codec readability checked, limitations recorded.
+- [x] Public source audit, MIT attribution, GitHub publication and remote verdict.
+
+## Verification scope
+
+Workspace compiler/tests, actual NVIDIA desktop capture, Unreal RHI recording, browser input,
+Box3D composition and app GUI checks passed. Public synthetic artifacts carry their own receipts.
+GitHub CI passed source `38a36b0cbbcfd9417539ea0a24cc3fd343246ef6`, run `43101404695`.
+
+Private host receipts remain in their repositories. BallRPG's actual web host produced 40 source
+frames, 40 encoded pictures and 40 native replay frames with no identity mismatch. Its native build,
+commandlet and actual editor capture passed. One earlier editor startup SIGSEGV remains
+unreproduced; no causal fix is claimed. Raycat's compiler gates and actual native review retained
+canonical annotation containers through move/undo/redo, resolved missing source images and opened
+the completed take's profiler. Its background palette selection was not verified; BRP screenshots
+timed out during recording after one success and succeeded after recording stopped.
+
+AMD runtime needs AMD hardware. Desktop capture currently targets Linux wlroots/evdev; hardware
+YUV conversion is not advertised as RGB lossless. Requested frame rate is not a delivery promise.
 
 ## QA plan
 
@@ -42,3 +59,8 @@ save/reopen. Inspect screenshots for clipping and correct alignment. Verify an i
 falls within recorded frame interval, dropped images are marked, original attachments survive,
 and agent export includes matching marked images/channel data. Do not publish desktop footage
 or imported private captures.
+
+## Related documentation
+
+- [Public recording and annotation evidence](evidence/README.md)
+- [Format contract](format.md)
