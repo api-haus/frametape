@@ -298,8 +298,15 @@ pub fn recover(directory: &Path, output: &Path) -> Result<std::path::PathBuf> {
             frame.video_frame = None;
         }
     }
+    let mut orphaned_events = 0;
+    for event in &mut events {
+        if event.frame.is_some_and(|i| i >= frames.len() as u64) {
+            event.frame = None;
+            orphaned_events += 1;
+        }
+    }
     let mut metadata = manifest.metadata;
-    metadata["recovery"] = serde_json::json!({"complete":false,"truncated_frame_bytes":frame_tail,"truncated_event_bytes":event_tail,"truncated_input_bytes":input_tail,"pending_video_unverified":unverified_video});
+    metadata["recovery"] = serde_json::json!({"complete":false,"truncated_frame_bytes":frame_tail,"truncated_event_bytes":event_tail,"truncated_input_bytes":input_tail,"pending_video_unverified":unverified_video,"unbound_out_of_coverage_events":orphaned_events});
     let mut name = output.as_os_str().to_owned();
     name.push(".recovery-recording");
     let mut writer = TapeWriter::create(std::path::PathBuf::from(name), metadata)?;
@@ -310,10 +317,21 @@ pub fn recover(directory: &Path, output: &Path) -> Result<std::path::PathBuf> {
         writer.frame(frame)?;
     }
     for event in &events {
-        if event.frame.is_some_and(|i| i >= frames.len() as u64) {
-            return Err(invalid("journal event references missing frame"));
-        }
         writer.event(event)?;
+    }
+    if orphaned_events > 0 {
+        channel(
+            &mut writer,
+            "capture.recovery",
+            "custom",
+            "frametape:recovery:v1",
+        )?;
+        writer.attach(
+            "capture.recovery",
+            "events.accepted.jsonl",
+            directory.join("events.jsonl"),
+            "application/x-ndjson",
+        )?;
     }
     let root = std::fs::canonicalize(directory)?;
     for attachment in manifest.attachments {

@@ -6,4 +6,3 @@ No recordings, private project code, credentials or machine-specific paths in pu
 Run `processqueue cpu cargo test --workspace` and review the diff before committing.
 Use independent capture/channel producers; core bundle/annotation crate has no engine dependency.
 Scratch: `.agents/scratch/` (excluded via `.git/info/exclude`). Builds: `target/` (same).
-

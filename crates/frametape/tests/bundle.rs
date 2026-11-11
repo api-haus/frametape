@@ -230,6 +230,17 @@ fn recovery_carries_pending_desktop_evidence_without_claiming_completed_pictures
     writer.checkpoint().unwrap();
     assert!(frametape::import::recover(&journal, &dir.join("active.ftape")).is_err());
     drop(writer);
+    let orphan = Event {
+        frame: Some(1),
+        timestamp_ns: 11,
+        channel: "video".into(),
+        data: json!({"error":"resized before pending frame persisted"}),
+    };
+    std::fs::write(
+        journal.join("events.jsonl"),
+        format!("{}\n", serde_json::to_string(&orphan).unwrap()),
+    )
+    .unwrap();
     let input = Event {
         frame: None,
         timestamp_ns: 5,
@@ -246,7 +257,16 @@ fn recovery_carries_pending_desktop_evidence_without_claiming_completed_pictures
     let output = dir.join("recovered.ftape");
     frametape::import::recover(&journal, &output).unwrap();
     let mut reader = TapeReader::open(output).unwrap();
-    assert_eq!(reader.events().unwrap()[0].data, input.data);
+    let events = reader.events().unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.channel == "input.evdev" && event.data == input.data)
+    );
+    assert_eq!(
+        events.iter().find(|e| e.data == orphan.data).unwrap().frame,
+        None
+    );
     assert_eq!(reader.frames().unwrap()[0].video_frame, None);
     assert_eq!(
         reader
