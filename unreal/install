@@ -9,7 +9,7 @@ profile=release
 args=(--release)
 if [ "${2:-}" = --debug ]; then profile=debug; args=(); fi
 frametape_admission=()
-if command -v processqueue >/dev/null 2>&1; then frametape_admission=(processqueue cpu); fi
+if command -v processqueue >/dev/null 2>&1 && [[ " ${PROCESSQUEUE_HELD:-} " != *" cpu "* ]]; then frametape_admission=(processqueue cpu); fi
 (cd "$root" && "${frametape_admission[@]}" cargo build -p frametape-ffi "${args[@]}")
 case $(uname -s) in
     Linux) platform=Linux; library=libframetape_ffi.a ;;
