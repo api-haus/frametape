@@ -199,21 +199,31 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
     if route == "catalog" {
         let mut rows = Vec::new();
         for path in recordings(root)? {
-            let stat = fs::metadata(&path)?;
-            let mut entry = json!({"id":id(&path),"name":path.file_name().unwrap().to_string_lossy(),"bytes":stat.len(),"modified_ms":stat.modified()?.duration_since(std::time::UNIX_EPOCH).map_err(io::Error::other)?.as_millis()});
-            match TapeReader::open(&path) {
-                Ok(mut tape) => {
-                    entry["manifest"] =
-                        serde_json::to_value(&tape.manifest).map_err(io::Error::other)?;
-                    entry["labels"] = json!(
-                        tape.annotations()?
-                            .containers
-                            .iter()
-                            .flat_map(|c| c.labels())
-                            .collect::<Vec<_>>()
-                    );
-                }
-                Err(error) => entry["error"] = json!(error.to_string()),
+            let mut entry = json!({"id":id(&path),"name":path.file_name().unwrap().to_string_lossy(),"bytes":0,"modified_ms":0});
+            let inspected = (|| -> io::Result<()> {
+                let stat = fs::metadata(&path)?;
+                entry["bytes"] = json!(stat.len());
+                entry["modified_ms"] = json!(
+                    stat.modified()?
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_err(io::Error::other)?
+                        .as_millis()
+                );
+                let mut tape = TapeReader::open(&path)?;
+                let annotations = tape.annotations()?;
+                entry["manifest"] =
+                    serde_json::to_value(&tape.manifest).map_err(io::Error::other)?;
+                entry["labels"] = json!(
+                    annotations
+                        .containers
+                        .iter()
+                        .flat_map(|c| c.labels())
+                        .collect::<Vec<_>>()
+                );
+                Ok(())
+            })();
+            if let Err(error) = inspected {
+                entry["error"] = json!(error.to_string());
             }
             rows.push(entry);
         }

@@ -14,6 +14,7 @@ project's MIT license. Actual desktop footage and raw desktop input stay private
 | Annotation app | Real trusted browser input: box, ellipse, arrow, brush, text, move, undo/redo, range 0–6, save, step and source-paced playback | App take and screenshot |
 | Missing image | Repeated source frame remains blank with explicit notice; prior picture hidden | Missing-frame screenshot |
 | Concurrent save | Stale editor receives conflict; current archive preserved and authored draft retained | Stale-save screenshot |
+| Catalog | Name sorting, no-match search and narrow 640×900 px controls exercised; malformed annotations disable only their row while two valid recordings remain available | Narrow view and HTTP check |
 | Storage | Original attachment roundtrip; corrupt extraction never publishes partial output; checked edit rejects stale base; recovery retains pending channels without claiming complete video | Workspace tests |
 | RGB lossless | Actual FFmpeg encode/decode preserves RGB samples, including odd-size padding | Codec integration test |
 
@@ -44,4 +45,5 @@ frametape export docs/evidence/app-qa.ftape app-frames --frames 0,5,15
 - [Annotated app screenshot](app-annotated.png)
 - [Missing-frame screenshot](missing-frame.png)
 - [Stale-save screenshot](stale-save.png)
+- [Narrow view](narrow-view.png)
 - [Recording format](../format.md)
