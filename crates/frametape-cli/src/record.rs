@@ -514,7 +514,10 @@ pub fn setup() -> io::Result<()> {
         file.sync_all()?;
         fs::rename(temp, &bin)?;
     }
-    let command = format!("{} toggle", bin.display());
+    let command = format!(
+        "'{}' toggle",
+        bin.display().to_string().replace('\'', "'\\''")
+    );
     let lua = format!(
         "hl.unbind(\"SUPER + SHIFT + R\"); hl.bind(\"SUPER + SHIFT + R\", hl.dsp.exec_cmd({}))",
         serde_json::to_string(&command)?
