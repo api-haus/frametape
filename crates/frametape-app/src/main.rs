@@ -10,10 +10,7 @@ use tao::{
 };
 use wry::WebViewBuilder;
 #[cfg(target_os = "linux")]
-use {
-    tao::platform::unix::{EventLoopBuilderExtUnix, WindowExtUnix},
-    wry::WebViewBuilderExtUnix,
-};
+use {tao::platform::unix::WindowExtUnix, wry::WebViewBuilderExtUnix};
 
 #[derive(Debug)]
 enum Action {
@@ -35,8 +32,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let server = AppServer::start(path, 0)?;
     let mut builder = EventLoopBuilder::<Action>::with_user_event();
-    #[cfg(target_os = "linux")]
-    builder.with_app_id("org.apihaus.Frametape");
     let mut events = builder.build();
     platform::configure_display();
     let window = WindowBuilder::new()
