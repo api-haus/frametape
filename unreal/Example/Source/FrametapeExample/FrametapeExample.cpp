@@ -1,4 +1,6 @@
 #include "FrametapeRecorder.h"
+#include "FrametapeControl.h"
+#include "Widgets/SWindow.h"
 #include "Containers/Ticker.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/Paths.h"
@@ -10,6 +12,7 @@
 class FFrametapeExampleModule : public FDefaultGameModuleImpl
 {
     FFrametapeRecorder Recorder;
+    TUniquePtr<FFrametapeControl> Control;
     IConsoleObject* Start = nullptr;
     IConsoleObject* Stop = nullptr;
     FTSTicker::FDelegateHandle Tick;
@@ -20,6 +23,14 @@ class FFrametapeExampleModule : public FDefaultGameModuleImpl
 public:
     void StartupModule() override
     {
+        if (!IsRunningCommandlet()) Control = MakeUnique<FFrametapeControl>([this](const FString& Path, const FString& Title)
+        {
+            SWindow* Window = FFrametapeRecorder::DefaultWindow();
+            if (!Window || Window->GetTitle().ToString() != Title) return FString(TEXT("Requested window is not this recorder's target"));
+            FFrametapeOptions Options; Options.Window = Window;
+            if (!Recorder.Start(Path, TEXT("{\"host\":\"Unreal native control example\"}"), Options)) return Recorder.Error();
+            Frame = 0; return FString();
+        }, [this] { return Recorder.Stop() ? FString() : Recorder.Error(); }, [this] { return Recorder.IsRecording(); });
         Start = IConsoleManager::Get().RegisterConsoleCommand(TEXT("Frametape.Start"), TEXT("Frametape.Start [archive.ftape]"), FConsoleCommandWithArgsDelegate::CreateLambda([this](const TArray<FString>& Args)
         {
             const FString Path = Args.Num() ? Args[0] : FPaths::ProjectSavedDir() / FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S.ftape"));
@@ -97,6 +108,7 @@ public:
     }
     void ShutdownModule() override
     {
+        Control.Reset();
         FTSTicker::GetCoreTicker().RemoveTicker(Tick);
         IConsoleManager::Get().UnregisterConsoleObject(Start);
         IConsoleManager::Get().UnregisterConsoleObject(Stop);

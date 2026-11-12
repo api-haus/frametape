@@ -14,3 +14,6 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 frametape.workspace = true
 frametape-video.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+frametape-control.workspace = true

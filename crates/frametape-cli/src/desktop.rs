@@ -1,6 +1,6 @@
 use clap::Args;
 use frametape::{Channel, Event, Frame, TapeWriter};
-use frametape_desktop::{InputRecorder, Screen, monotonic_ns};
+use frametape_desktop::{CaptureTarget, InputRecorder, Screen, monotonic_ns};
 use frametape_video::{EncoderConfig, Quality, Recorder, Sent};
 use serde_json::json;
 use std::fs::File;
@@ -13,8 +13,8 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 #[derive(Args)]
+#[group(id = "capture_options")]
 pub struct Options {
-    pub path: PathBuf,
     #[arg(long)]
     pub output: Option<String>,
     #[arg(long,default_value_t=60, value_parser=clap::value_parser!(u32).range(1..=240))]
@@ -35,23 +35,27 @@ pub struct Options {
     pub input: Vec<PathBuf>,
 }
 
-pub fn record(options: Options) -> io::Result<()> {
-    if options.path.exists() {
+pub fn record(
+    path: &std::path::Path,
+    options: Options,
+    target: CaptureTarget<'_>,
+    metadata: serde_json::Value,
+    stop: Arc<AtomicBool>,
+    alive: impl Fn() -> io::Result<bool>,
+) -> io::Result<()> {
+    if path.exists() {
         return Err(io::Error::other("output exists"));
     }
     if options.seconds.is_some_and(|s| !s.is_finite() || s <= 0.0) {
         return Err(io::Error::other("seconds must be finite and positive"));
     }
-    if let Some(parent) = options.path.parent() {
+    if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut journal = options.path.as_os_str().to_owned();
+    let mut journal = path.as_os_str().to_owned();
     journal.push(".recording");
     let journal = PathBuf::from(journal);
-    let mut screen = Screen::connect(options.output.as_deref())?;
-    let stop = Arc::new(AtomicBool::new(false));
-    let signal = stop.clone();
-    ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed)).map_err(io::Error::other)?;
+    let mut screen = Screen::connect_target(target)?;
     let config = EncoderConfig {
         quality: if options.lossless {
             Quality::Lossless
@@ -64,7 +68,7 @@ pub fn record(options: Options) -> io::Result<()> {
     };
     let mut writer = TapeWriter::create(
         &journal,
-        json!({"host":"desktop","output":screen.name,"clock":"CLOCK_MONOTONIC","video_fps":options.fps,"capture":"wlr-screencopy-shm"}),
+        json!({"host":"desktop","target":metadata,"output":screen.name,"clock":"CLOCK_MONOTONIC","video_fps":options.fps,"capture":"wayland-shm"}),
     )?;
     writer.register(Channel {
         id: "video".into(),
@@ -115,7 +119,11 @@ pub fn record(options: Options) -> io::Result<()> {
             .is_none_or(|s| began.elapsed().as_secs_f64() < s)
     {
         let requested = monotonic_ns()?;
-        let image = screen.capture()?;
+        let image = match screen.capture() {
+            Ok(image) => image,
+            Err(_) if !alive()? => break,
+            Err(error) => return Err(error),
+        };
         let received = monotonic_ns()?;
         // A foreign presentation epoch cannot be correlated with evdev; refuse guessed alignment.
         if image.timestamp_ns < requested.saturating_sub(250_000_000)
@@ -175,7 +183,7 @@ pub fn record(options: Options) -> io::Result<()> {
     encoder.finish()?;
     writer.attach("video", "capture.mp4", &video_path, "video/mp4")?;
     std::fs::remove_file(&video_path)?;
-    let path = writer.finish(&options.path)?;
+    let path = writer.finish(path)?;
     println!("{}", std::path::absolute(path)?.display());
     Ok(())
 }

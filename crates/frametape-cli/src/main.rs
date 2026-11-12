@@ -2,6 +2,10 @@ mod app;
 #[cfg(target_os = "linux")]
 mod desktop;
 mod export;
+#[cfg(target_os = "linux")]
+mod record;
+#[cfg(target_os = "linux")]
+mod window;
 
 use clap::{Parser, Subcommand};
 use frametape::TapeReader;
@@ -19,7 +23,19 @@ struct Cli {
 enum Command {
     /// Capture a Wayland output and Linux input events into one recording.
     #[cfg(target_os = "linux")]
-    Record(desktop::Options),
+    Record(record::Options),
+    /// Toggle the active take, or start recording the foreground application.
+    #[cfg(target_os = "linux")]
+    Toggle(record::Options),
+    /// Install this executable and activate Super+Shift+R for the current Hyprland session.
+    #[cfg(target_os = "linux")]
+    Setup,
+    /// Print the current shortcut session and destination.
+    #[cfg(target_os = "linux")]
+    Status,
+    /// List application windows and their selectors.
+    #[cfg(target_os = "linux")]
+    Windows,
     /// Open the recording catalog and annotation app locally.
     App {
         path: PathBuf,
@@ -83,7 +99,18 @@ fn main() {
 fn run(cli: Cli) -> io::Result<()> {
     match cli.command {
         #[cfg(target_os = "linux")]
-        Command::Record(options) => desktop::record(options),
+        Command::Record(options) => record::record(options),
+        #[cfg(target_os = "linux")]
+        Command::Toggle(options) => record::toggle(options),
+        #[cfg(target_os = "linux")]
+        Command::Setup => record::setup(),
+        #[cfg(target_os = "linux")]
+        Command::Status => record::status(),
+        #[cfg(target_os = "linux")]
+        Command::Windows => {
+            println!("{}", serde_json::to_string_pretty(&window::windows()?)?);
+            Ok(())
+        }
         Command::App {
             path,
             port,

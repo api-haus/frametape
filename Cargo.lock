@@ -383,6 +383,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "frametape",
+ "frametape-control",
  "frametape-desktop",
  "frametape-video",
  "getrandom",
@@ -394,15 +395,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "frametape-control"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "frametape-desktop"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.13.2",
  "frametape",
  "libc",
  "memmap2",
  "serde_json",
+ "wayland-backend",
  "wayland-client",
  "wayland-protocols-wlr",
+ "wayland-scanner",
 ]
 
 [[package]]
@@ -410,6 +423,7 @@ name = "frametape-ffi"
 version = "0.1.0"
 dependencies = [
  "frametape",
+ "frametape-control",
  "frametape-video",
  "serde_json",
 ]

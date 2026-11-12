@@ -3,7 +3,7 @@
 mod input;
 mod screen;
 pub use input::{InputRecorder, InputSummary, input_devices};
-pub use screen::{Picture, Screen};
+pub use screen::{CaptureTarget, Picture, Screen};
 
 pub fn monotonic_ns() -> std::io::Result<u64> {
     let mut time: libc::timespec = unsafe { std::mem::zeroed() };

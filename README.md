@@ -7,11 +7,43 @@ MIT libraries and local tools for Rust, C/C++, Unreal and browser hosts.
 
 ```bash
 cargo install --git https://github.com/api-haus/frametape --locked frametape-cli
-frametape record issue.ftape --output DP-1
+frametape setup
+frametape record
 frametape app recordings/
 frametape inspect issue.ftape --frame 42
 frametape export issue.ftape issue-frames/
 ```
+
+`Super+Shift+R` toggles the foreground application's recording after `frametape setup`.
+The selected window stays fixed when focus changes. A second press stops that take, even
+from another app. Defaults save to `Videos/Frametape/`; `frametape status` shows the active
+destination. Setup installs the executable in `~/.local/bin` and binds the current Hyprland
+session. For persistence, add `hl.bind("SUPER + SHIFT + R",
+hl.dsp.exec_cmd("~/.local/bin/frametape toggle"))` to the compositor's Lua keybind configuration.
+
+```bash
+frametape record issue.ftape --app raycat
+frametape record issue.ftape --pid 12345
+frametape record issue.ftape -- my-game --windowed
+frametape record issue.ftape --app game-class -- steam -applaunch 123456
+frametape windows
+frametape record monitor.ftape --output DP-1
+```
+
+App classes and titles match exactly; ambiguous selectors require `--window ADDRESS`.
+Launch capture waits for the launched process or its descendants; launchers delegating to an
+existing process, including Steam, require an explicit app selector.
+
+Native recording is preferred when the selected app registers a Frametape control host and
+acknowledges the selected window. Multiple same-process windows use isolated desktop capture.
+`--native required` refuses unsupported/ambiguous hosts; `--native off` forces window capture.
+Capture/encoder options configure desktop capture; native producers own their sampling/codec
+settings. Native sessions retain recovery identity across controller failure; a later toggle
+reconciles the same app process and take before starting another. Native hooks can contribute
+profiling, state, physics and scripted channels; external apps provide pixels and raw input.
+
+Window selection/export currently requires Hyprland. Explicit `--output` retains the wlroots
+monitor backend. Window recording captures the surface itself, not a cropped monitor region.
 
 Install FFmpeg/FFprobe separately. Desktop capture currently requires Linux with a
 wlroots compositor supporting screencopy v3 and read access to selected `/dev/input/event*`
@@ -38,6 +70,7 @@ NVIDIA has runtime verification; AMD requires verification on an AMD device.
 | `frametape` | Versioned bundle, channels, source frames, annotations, legacy import |
 | `frametape-video` | Bounded asynchronous FFmpeg encoder, codec negotiation, resize concatenation |
 | `frametape-desktop` | Independently usable Linux Wayland and evdev producers |
+| `frametape-control` | Opt-in per-process native discovery and acknowledged start/stop/status |
 | `frametape-ffi` | Per-instance C ABI, static/shared libraries |
 | `frametape-cli` | Recorder, catalog/editor, extraction and agent packets |
 

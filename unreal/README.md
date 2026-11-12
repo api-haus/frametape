@@ -66,3 +66,11 @@ cargo run --manifest-path unreal/examples/Cargo.toml -- simulation.b3rec timelin
 contracts. Each physics event uses channel `physics.box3d.step`, a render frame index,
 monotonic timestamp in nanoseconds and data such as `{"physics_step":42,"render_frame":21}`.
 Original Box3D bytes remain unchanged inside archive.
+## Foreground recording control
+
+`FFrametapeControl` registers an opt-in Linux process endpoint for `frametape record` and the
+global shortcut. Supply start, stop and busy callbacks on the game thread. Start receives
+the archive path and selected window title; reject a different capture target. Stop must drain
+and publish that exact archive before returning success. The example module demonstrates
+registration with `FFrametapeRecorder`; game adapters can retain their existing state/profiler
+producers. No HTTP listener or engine-global recorder is installed automatically.

@@ -26,3 +26,4 @@ getrandom = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 frametape-desktop = { version = "0.1.0", path = "../frametape-desktop" }
+frametape-control.workspace = true

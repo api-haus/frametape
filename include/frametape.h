@@ -39,6 +39,20 @@ int ft_video_close(ft_video *);
 /* Abort consumes the handle; original encoder output is retained. */
 void ft_video_abort(ft_video *);
 
+#if defined(__unix__)
+typedef struct ft_control ft_control;
+/* One opt-in native control host per process. Poll and reply on the app's owning thread.
+ * Start also carries window_title; reject a mismatch with the window actually captured.
+ * Requests: {"op":"start"|"stop","path":"/absolute/take.ftape"} or {"op":"status"}.
+ * Replies: {"recording":bool,"path":string|null,"error":string|null}.
+ * A stop reply acknowledges a fully published archive, not queued work. */
+ft_control *ft_control_open(void);
+/* NULL means no request; inspect ft_last_error for a failure. JSON lives until next poll. */
+const char *ft_control_poll(ft_control *);
+int ft_control_reply(ft_control *, const char *json);
+void ft_control_close(ft_control *);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

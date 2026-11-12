@@ -238,11 +238,7 @@ bool FFrametapeRecorder::Start(const FString& Path, const FString& Metadata, con
     if (Options.bVideo)
     {
         if (!bSlate) { Impl->Session->Failure = TEXT("Video requested but Slate is unavailable"); return false; }
-        if (!Window)
-        {
-            if (UGameEngine* Game = Cast<UGameEngine>(GEngine); Game && Game->GameViewportWindow.IsValid()) Window = Game->GameViewportWindow.Pin().Get();
-            if (!Window) Window = FSlateApplication::Get().GetActiveTopLevelWindow().Get();
-        }
+        if (!Window) Window = DefaultWindow();
         if (!Window) { Impl->Session->Failure = TEXT("Video requested but no window is available"); return false; }
     }
     TSharedPtr<FJsonObject> MetadataObject;
@@ -376,3 +372,10 @@ bool FFrametapeRecorder::Stop()
 bool FFrametapeRecorder::IsRecording() const { return Impl->Session->Handle != nullptr; }
 uint64 FFrametapeRecorder::VideoFrames() const { return Impl->Video ? Impl->Video->Accepted.load(std::memory_order_relaxed) : Impl->CompletedVideoFrames; }
 FString FFrametapeRecorder::Error() const { FScopeLock Lock(&Impl->Session->Mutex); return Impl->Session->Failure; }
+
+SWindow* FFrametapeRecorder::DefaultWindow()
+{
+    if (!FSlateApplication::IsInitialized()) return nullptr;
+    if (UGameEngine* Game = Cast<UGameEngine>(GEngine); Game && Game->GameViewportWindow.IsValid()) return Game->GameViewportWindow.Pin().Get();
+    return FSlateApplication::Get().GetActiveTopLevelWindow().Get();
+}

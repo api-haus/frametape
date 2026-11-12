@@ -12,5 +12,8 @@ frametape.workspace = true
 serde_json.workspace = true
 libc = "0.2"
 wayland-client = "0.31"
+wayland-scanner = "0.31"
+wayland-backend = "0.3"
+bitflags = "2"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 memmap2 = "0.9"

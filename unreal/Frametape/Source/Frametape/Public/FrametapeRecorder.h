@@ -31,6 +31,7 @@ public:
     // Accepted pictures, finalized when Stop succeeds; independent of logical frame count.
     uint64 VideoFrames() const;
     FString Error() const;
+    static SWindow* DefaultWindow();
 
 private:
     struct FImpl;

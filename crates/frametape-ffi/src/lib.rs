@@ -59,6 +59,66 @@ pub struct Video {
     next: u64,
 }
 
+#[cfg(unix)]
+pub struct Control {
+    host: frametape_control::ControlHost,
+    pending: Option<frametape_control::Pending>,
+    json: CString,
+}
+
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_control_open() -> *mut Control {
+    call(|| {
+        Ok(Box::into_raw(Box::new(Control {
+            host: frametape_control::ControlHost::bind()?,
+            pending: None,
+            json: CString::default(),
+        })))
+    })
+}
+
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ft_control_poll(control: *mut Control) -> *const c_char {
+    call(|| {
+        let control = unsafe { handle(control)? };
+        if control.pending.is_some() {
+            return Err(io::Error::other(
+                "reply to the pending native control request before polling",
+            ));
+        }
+        let Some(pending) = control.host.poll() else {
+            return Ok(std::ptr::null());
+        };
+        control.json = CString::new(serde_json::to_string(&pending.request)?)?;
+        control.pending = Some(pending);
+        Ok(control.json.as_ptr())
+    })
+}
+
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ft_control_reply(control: *mut Control, json: *const c_char) -> c_int {
+    status(|| {
+        let reply = serde_json::from_str(unsafe { text(json)? })?;
+        unsafe { handle(control)? }
+            .pending
+            .take()
+            .ok_or_else(|| io::Error::other("no pending native control request"))?
+            .reply(reply);
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ft_control_close(control: *mut Control) {
+    if !control.is_null() {
+        drop(unsafe { Box::from_raw(control) });
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_last_error() -> *const c_char {
     ERROR.with(|e| e.borrow().as_ptr())
