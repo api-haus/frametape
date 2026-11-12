@@ -180,7 +180,13 @@ fn run(cli: Cli) -> io::Result<()> {
                 cmd.args(["/C", "start", ""]);
                 cmd
             };
-            #[cfg(all(not(windows), not(target_os = "macos")))]
+            #[cfg(target_os = "linux")]
+            let mut opener = {
+                let mut command = std::process::Command::new("gio");
+                command.arg("open");
+                command
+            };
+            #[cfg(all(not(windows), not(target_os = "macos"), not(target_os = "linux")))]
             let mut opener = std::process::Command::new("xdg-open");
             opener.arg(path).spawn()?;
             Ok(())

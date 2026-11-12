@@ -131,6 +131,7 @@ WASM_BINDGEN=wasm-bindgen tools/build-web
 ```
 
 Native builds require GTK3/WebKitGTK4.1 on Linux; Windows uses WebView2 and macOS WKWebView.
+The Linux browser launcher uses GIO (glib tools) to open the local HTML file.
 Linux initializes unset GDK font DPI before WebKit. NVIDIA Wayland sessions use WebKit’s shared-memory
 renderer path and NVIDIA’s documented explicit-sync workaround inside this process; explicit
 environment settings win.
