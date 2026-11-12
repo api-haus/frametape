@@ -162,6 +162,18 @@ impl Recorder {
         }
     }
 
+    /// Waits for bounded queue capacity. Use outside a host's render thread when every
+    /// captured picture must be retained; conversion still runs on the encoder thread.
+    pub fn write_with_backpressure(&mut self, frame: Frame) -> io::Result<()> {
+        self.frames
+            .as_ref()
+            .expect("active recorder")
+            .send(frame)
+            .map_err(|_| io::Error::other("the encoder stopped"))?;
+        self.written += 1;
+        Ok(())
+    }
+
     /// Flushes every accepted frame and returns only after FFmpeg wrote its trailer.
     pub fn finish(mut self) -> io::Result<PathBuf> {
         self.frames.take();

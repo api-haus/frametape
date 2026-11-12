@@ -2,6 +2,37 @@ use frametape_video::{EncoderConfig, Quality, Recorder, Sent};
 use std::process::Command;
 
 #[test]
+fn backpressure_preserves_a_burst_larger_than_the_queue() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.agents/scratch/video-burst-test")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("burst.mp4");
+    let config = EncoderConfig {
+        quality: Quality::Lossless,
+        encoder: Some("libx264rgb".into()),
+        ..Default::default()
+    };
+    let mut recorder = Recorder::start_with(&path, 16, 16, 60.0, &config).unwrap();
+    for value in 0..32 {
+        recorder
+            .write_with_backpressure(Box::new(move || vec![value; 16 * 16 * 4]))
+            .unwrap();
+    }
+    assert_eq!(recorder.written(), 32);
+    recorder.finish().unwrap();
+    let output = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(&path)
+        .args(["-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let expected: Vec<u8> = (0..32).flat_map(|value| vec![value; 16 * 16 * 3]).collect();
+    assert_eq!(output.stdout, expected);
+}
+
+#[test]
 fn lossless_rgb_through_ffmpeg_and_odd_frame_padding() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../.agents/scratch/video-test")

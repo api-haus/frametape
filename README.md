@@ -59,7 +59,10 @@ status are recorded. CPU encoding remains available when hardware cannot encode.
 conversion is not advertised as pixel-lossless. Alpha is excluded.
 
 The capture backend currently transfers compositor SHM buffers through a bounded encoder
-queue. Requested frame rate is a limit, not a delivery guarantee. Missing pictures have
+queue. The isolated desktop recorder waits for queue capacity before taking another picture;
+encoder pressure reduces capture rate instead of discarding pictures. Engine hosts retain the
+nonblocking API; independent hosts can select `Recorder::write_with_backpressure`.
+Requested frame rate is a limit, not a delivery guarantee. Missing pictures have
 explicit null mappings; input-overrun events and encoder failures remain visible.
 NVIDIA has runtime verification; AMD requires verification on an AMD device.
 

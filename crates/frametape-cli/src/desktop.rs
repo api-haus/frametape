@@ -1,7 +1,7 @@
 use clap::Args;
 use frametape::{Channel, Event, Frame, TapeWriter};
 use frametape_desktop::{CaptureTarget, InputRecorder, Screen, monotonic_ns};
-use frametape_video::{EncoderConfig, Quality, Recorder, Sent};
+use frametape_video::{EncoderConfig, Quality, Recorder};
 use serde_json::json;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
@@ -145,7 +145,8 @@ pub fn record(
         }
         let video_frame = if (image.width, image.height) == encoder.size() {
             let number = encoder.written();
-            (encoder.write_with(Box::new(move || image.rgba()))? == Sent::Queued).then_some(number)
+            encoder.write_with_backpressure(Box::new(move || image.rgba()))?;
+            Some(number)
         } else {
             writer.event(&Event {frame:Some(next_index),timestamp_ns,channel:"capture".into(),data:json!({"error":"output resized; frame omitted","width":image.width,"height":image.height})})?;
             None
