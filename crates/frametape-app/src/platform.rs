@@ -2,12 +2,19 @@ pub fn prepare() {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_some()
         && std::path::Path::new("/sys/module/nvidia").exists()
-        && std::env::var_os("__NV_DISABLE_EXPLICIT_SYNC").is_none()
     {
-        // NVIDIA EGL/GTK can attach a buffer without its required acquire timeline.
+        // NVIDIA EGL/GTK can miss acquire timelines or lose composited page layers.
+        // Keep this process on WebKit's SHM path; explicit user overrides win.
         // https://github.com/NVIDIA/egl-wayland2#environment-variables
-        // Called before GTK and the review server start any threads.
-        unsafe { std::env::set_var("__NV_DISABLE_EXPLICIT_SYNC", "1") };
+        for name in [
+            "__NV_DISABLE_EXPLICIT_SYNC",
+            "WEBKIT_DISABLE_DMABUF_RENDERER",
+        ] {
+            if std::env::var_os(name).is_none() {
+                // Called before GTK and the review server start any threads.
+                unsafe { std::env::set_var(name, "1") };
+            }
+        }
     }
 }
 

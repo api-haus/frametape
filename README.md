@@ -131,8 +131,9 @@ WASM_BINDGEN=wasm-bindgen tools/build-web
 ```
 
 Native builds require GTK3/WebKitGTK4.1 on Linux; Windows uses WebView2 and macOS WKWebView.
-Linux initializes unset GDK font DPI before WebKit and applies NVIDIA’s documented explicit-sync
-workaround inside this process on NVIDIA Wayland sessions; an explicit environment setting wins.
+Linux initializes unset GDK font DPI before WebKit. NVIDIA Wayland sessions use WebKit’s shared-memory
+renderer path and NVIDIA’s documented explicit-sync workaround inside this process; explicit
+environment settings win.
 Build the web model with Rust's wasm32-unknown-unknown target and matching wasm-bindgen-cli0.2.130;
 JavaScript dependencies build through nodebox. Third-party browser notices ship next to the HTML.
 
