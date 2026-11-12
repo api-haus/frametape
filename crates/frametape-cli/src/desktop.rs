@@ -68,7 +68,7 @@ pub fn record(
     };
     let mut writer = TapeWriter::create(
         &journal,
-        json!({"host":"desktop","target":metadata,"output":screen.name,"clock":"CLOCK_MONOTONIC","video_fps":options.fps,"capture":"wayland-shm"}),
+        json!({"host":"desktop","target":metadata,"output":screen.name,"clock":"CLOCK_MONOTONIC","video_fps":options.fps,"capture":"wayland-shm","input_scope":"desktop-global"}),
     )?;
     writer.register(Channel {
         id: "video".into(),

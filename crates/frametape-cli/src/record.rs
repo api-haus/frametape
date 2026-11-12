@@ -363,10 +363,7 @@ pub fn record(options: Options) -> io::Result<()> {
     if let Ok(bytes) = fs::read(&lease.state) {
         let previous: Session = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
         lease.preserve = true;
-        if recover_native(&previous)? {
-            lease.preserve = false;
-            return Ok(());
-        }
+        recover_native(&previous)?;
         lease.preserve = false;
     }
     if options
@@ -393,7 +390,8 @@ pub fn record(options: Options) -> io::Result<()> {
             .filter(|w| w.pid == window.pid)
             .count()
             == 1
-            && frametape_control::available(window.pid)?
+            && window.pid > 0
+            && frametape_control::available(window.pid).unwrap_or(false)
     } else {
         false
     };
@@ -409,7 +407,7 @@ pub fn record(options: Options) -> io::Result<()> {
         pid: std::process::id(),
         birth: process_birth(std::process::id())?,
         path: path.clone(),
-        target_birth: target.as_ref().map(|w| process_birth(w.pid)).transpose()?,
+        target_birth: target.as_ref().and_then(|w| process_birth(w.pid).ok()),
         target: target.clone(),
         native,
     };
@@ -522,10 +520,12 @@ pub fn setup() -> io::Result<()> {
         serde_json::to_string(&command)?
     );
     let result = Command::new("hyprctl").args(["eval", &lua]).output()?;
-    if !result.status.success() {
-        return Err(io::Error::other(
-            String::from_utf8_lossy(&result.stderr).to_string(),
-        ));
+    if !result.status.success() || String::from_utf8_lossy(&result.stdout).trim() != "ok" {
+        return Err(io::Error::other(format!(
+            "Hyprland Lua shortcut registration failed: {} {}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        )));
     }
     println!(
         "installed {}; Super+Shift+R toggles foreground recording for this compositor session",

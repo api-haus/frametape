@@ -5,9 +5,16 @@ use std::{io, process::Command};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Window {
     pub address: String,
+    #[serde(default, deserialize_with = "process_id")]
     pub pid: u32,
     pub class: String,
     pub title: String,
+}
+
+fn process_id<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    Ok(Option::<i64>::deserialize(deserializer)?
+        .and_then(|pid| u32::try_from(pid).ok())
+        .unwrap_or(0))
 }
 
 fn query(argument: &str) -> io::Result<serde_json::Value> {
