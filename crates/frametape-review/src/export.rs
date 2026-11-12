@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 pub fn cache_key(path: &Path) -> io::Result<String> {
-    let stat = fs::metadata(path)?;
+    cache_key_metadata(path, &fs::metadata(path)?)
+}
+
+pub fn cache_key_metadata(path: &Path, stat: &fs::Metadata) -> io::Result<String> {
     let mut hash = DefaultHasher::new();
     path.hash(&mut hash);
     stat.len().hash(&mut hash);

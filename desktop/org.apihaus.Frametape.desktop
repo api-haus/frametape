@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Frametape
+GenericName=Recording Reviewer
+Comment=Play, inspect and annotate synchronized recordings
+Exec=frametape-app %f
+Icon=frametape
+Terminal=false
+Categories=AudioVideo;Graphics;Development;
+MimeType=application/x-frametape;
+StartupWMClass=frametape-app
+Keywords=recording;annotation;video;frames;

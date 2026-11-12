@@ -106,6 +106,36 @@ UI or encoder dependency is required by the bundle library. Independent samples 
 [Unreal installation and Box3D examples](unreal/README.md), [browser integration](web/README.md)
 and the [C header](include/frametape.h) cover other hosts.
 
+## Standalone annotation and playback
+
+`frametape-app` opens a native window with a folder catalog, original-frame review, source-clock
+playback, synchronized events and annotation tools. It accepts a `.ftape` path or folder; with no
+argument it opens Videos/Frametape. Linux desktop packaging registers `.ftape` with this app.
+
+`frametape app [FILE-OR-FOLDER]` prefers the installed native app. `--browser` retains the local
+Rust-backed browser UI; `--no-open` serves it without launching a window.
+
+The entirely browser-local version is [web/app/frametape.html](web/app/frametape.html): download
+and open the single HTML file, then select local recordings/folders. It requires no recording
+server and uploads no files. Original frame decoding and motion preview run on this device.
+The separately licensed FFmpeg codec program is fetched from a pinned, integrity-checked upstream
+URL on first use and cached; the app/model itself is embedded. Browser drafts persist in IndexedDB
+with generation checks. Export produces a new `.ftape` copy and preserves original channels and
+attachments. Originals remain unchanged. A requested download is labeled as requested, since the
+browser cannot confirm whether you kept the file.
+
+```bash
+frametape-app issue.ftape
+frametape web
+WASM_BINDGEN=wasm-bindgen tools/build-web
+```
+
+Native builds require GTK3/WebKitGTK4.1 on Linux; Windows uses WebView2 and macOS WKWebView.
+Linux initializes unset GDK font DPI before WebKit and applies NVIDIA’s documented explicit-sync
+workaround inside this process on NVIDIA Wayland sessions; an explicit environment setting wins.
+Build the web model with Rust's wasm32-unknown-unknown target and matching wasm-bindgen-cli0.2.130;
+JavaScript dependencies build through nodebox. Third-party browser notices ship next to the HTML.
+
 ## Review and agent inspection
 
 The local app catalogs a folder with previews, search and sorting. Open a take, step or

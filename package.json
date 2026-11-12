@@ -1,0 +1,17 @@
+{
+  "name": "frametape-web-app",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "scripts": {
+    "build": "node tools/build-web.mjs"
+  },
+  "dependencies": {
+    "@ffmpeg/core": "0.12.10",
+    "@ffmpeg/ffmpeg": "0.12.15",
+    "@zip.js/zip.js": "2.24.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

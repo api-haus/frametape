@@ -378,26 +378,8 @@ impl TapeReader {
             }
             serde_json::from_reader::<_, Manifest>(member.take(JSON_LIMIT + 1)).map_err(invalid)?
         };
-        if manifest.format != "frametape" || manifest.version != 1 {
-            return Err(invalid("unsupported recording format/version"));
-        }
-        if !manifest.metadata.is_object() || manifest.id.is_empty() {
-            return Err(invalid("invalid recording metadata/id"));
-        }
-        let mut channels = HashSet::new();
-        for channel in &manifest.channels {
-            if channel.id.is_empty()
-                || channel.kind.is_empty()
-                || channel.schema.is_empty()
-                || !channels.insert(&channel.id)
-            {
-                return Err(invalid("invalid/duplicate channel"));
-            }
-        }
+        validate_manifest(&manifest)?;
         for attachment in &manifest.attachments {
-            if !channels.contains(&attachment.channel) {
-                return Err(invalid("attachment names missing channel"));
-            }
             let member = archive.by_name(&attachment.path).map_err(invalid)?;
             if member.size() != attachment.bytes {
                 return Err(invalid("attachment size mismatch"));
@@ -462,42 +444,9 @@ impl TapeReader {
 
     pub fn frames(&mut self) -> Result<Vec<Frame>> {
         let mut frames: Vec<Frame> = self.lines("frames.jsonl")?;
-        if frames.len() as u64 != self.manifest.frame_count {
-            return Err(invalid("frame count differs from manifest"));
-        }
-        let mut last = 0;
-        for (i, frame) in frames.iter().enumerate() {
-            if frame.index != i as u64
-                || (i > 0 && frame.timestamp_ns < last)
-                || frame
-                    .timestamp_ns
-                    .checked_add(frame.duration_ns)
-                    .is_none_or(|end| end > self.manifest.duration_ns)
-            {
-                return Err(invalid("invalid frame timeline"));
-            }
-            last = frame.timestamp_ns;
-        }
+        validate_timeline(&self.manifest, &frames)?;
         self.visit_events(|event| {
-            if event.channel == "video.frame" {
-                let index = event.data["source_frame"]
-                    .as_u64()
-                    .or(event.frame)
-                    .ok_or_else(|| invalid("video mapping lacks source frame"))?;
-                let index = usize::try_from(index).map_err(invalid)?;
-                let frame = frames
-                    .get_mut(index)
-                    .ok_or_else(|| invalid("video mapping references missing source frame"))?;
-                frame.video_frame = if event.data["status"] == "captured" {
-                    Some(
-                        event.data["video_frame"]
-                            .as_u64()
-                            .ok_or_else(|| invalid("captured mapping lacks picture index"))?,
-                    )
-                } else {
-                    None
-                };
-            }
+            apply_video_mapping(&mut frames, &event)?;
             Ok(())
         })?;
         Ok(frames)
@@ -541,11 +490,7 @@ impl TapeReader {
                 return Err(invalid("event record exceeds size limit"));
             }
             let event: Event = serde_json::from_slice(&line).map_err(invalid)?;
-            if event.frame.is_some_and(|f| f >= self.manifest.frame_count)
-                || !self.manifest.channels.iter().any(|c| c.id == event.channel)
-            {
-                return Err(invalid("event references missing channel/frame"));
-            }
+            validate_event(&self.manifest, &event)?;
             visit(event)?;
             count += 1;
         }
@@ -571,13 +516,7 @@ impl TapeReader {
             std::str::from_utf8(&self.read("annotations.json", JSON_LIMIT)?).map_err(invalid)?,
         )
         .map_err(invalid)?;
-        if annotations
-            .containers
-            .iter()
-            .any(|c| c.end_frame >= self.manifest.frame_count)
-        {
-            return Err(invalid("annotation references missing source frame"));
-        }
+        validate_annotations(&annotations, self.manifest.frame_count)?;
         Ok(annotations)
     }
 }
@@ -650,4 +589,95 @@ pub fn frame_at(frames: &[Frame], timestamp_ns: u64) -> Option<&Frame> {
         .checked_sub(1)?;
     let frame = &frames[index];
     (timestamp_ns < frame.timestamp_ns.saturating_add(frame.duration_ns)).then_some(frame)
+}
+
+/// Validate format and channel contracts without assuming a filesystem or ZIP implementation.
+pub fn validate_manifest(manifest: &Manifest) -> Result<()> {
+    if manifest.format != "frametape" || manifest.version != 1 {
+        return Err(invalid("unsupported recording format/version"));
+    }
+    if !manifest.metadata.is_object() || manifest.id.is_empty() {
+        return Err(invalid("invalid recording metadata/id"));
+    }
+    let mut channels = HashSet::new();
+    for channel in &manifest.channels {
+        if channel.id.is_empty()
+            || channel.kind.is_empty()
+            || channel.schema.is_empty()
+            || !channels.insert(&channel.id)
+        {
+            return Err(invalid("invalid/duplicate channel"));
+        }
+    }
+    for attachment in &manifest.attachments {
+        safe_name(&attachment.path)?;
+        if !channels.contains(&attachment.channel) {
+            return Err(invalid("attachment names missing channel"));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_timeline(manifest: &Manifest, frames: &[Frame]) -> Result<()> {
+    if frames.len() as u64 != manifest.frame_count {
+        return Err(invalid("frame count differs from manifest"));
+    }
+    let mut last = 0;
+    for (i, frame) in frames.iter().enumerate() {
+        if frame.index != i as u64
+            || (i > 0 && frame.timestamp_ns < last)
+            || frame
+                .timestamp_ns
+                .checked_add(frame.duration_ns)
+                .is_none_or(|end| end > manifest.duration_ns)
+        {
+            return Err(invalid("invalid frame timeline"));
+        }
+        last = frame.timestamp_ns;
+    }
+    Ok(())
+}
+
+pub fn validate_event(manifest: &Manifest, event: &Event) -> Result<()> {
+    if event.frame.is_some_and(|f| f >= manifest.frame_count)
+        || !manifest.channels.iter().any(|c| c.id == event.channel)
+    {
+        return Err(invalid("event references missing channel/frame"));
+    }
+    Ok(())
+}
+
+pub fn apply_video_mapping(frames: &mut [Frame], event: &Event) -> Result<()> {
+    if event.channel == "video.frame" {
+        let index = event.data["source_frame"]
+            .as_u64()
+            .or(event.frame)
+            .ok_or_else(|| invalid("video mapping lacks source frame"))?;
+        let index = usize::try_from(index).map_err(invalid)?;
+        let frame = frames
+            .get_mut(index)
+            .ok_or_else(|| invalid("video mapping references missing source frame"))?;
+        frame.video_frame = if event.data["status"] == "captured" {
+            Some(
+                event.data["video_frame"]
+                    .as_u64()
+                    .ok_or_else(|| invalid("captured mapping lacks picture index"))?,
+            )
+        } else {
+            None
+        };
+    }
+    Ok(())
+}
+
+pub fn validate_annotations(annotations: &Annotations, frame_count: u64) -> Result<()> {
+    annotations.validate().map_err(invalid)?;
+    if annotations
+        .containers
+        .iter()
+        .any(|container| container.end_frame >= frame_count)
+    {
+        return Err(invalid("annotation references missing source frame"));
+    }
+    Ok(())
 }

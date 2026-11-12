@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+admission=()
+if command -v processqueue >/dev/null 2>&1; then admission=(processqueue cpu); fi
+# Native linker flags from a user's Cargo config must not reach the WebAssembly linker.
+frametape_wasm_flags=("--remap-path-prefix=$PWD=." "--remap-path-prefix=$HOME=cargo-home")
+frametape_wasm_encoded=$(IFS=$'\x1f'; echo "${frametape_wasm_flags[*]}")
+CARGO_ENCODED_RUSTFLAGS="$frametape_wasm_encoded" "${admission[@]}" cargo build -p frametape-web --target wasm32-unknown-unknown --release
+mkdir -p app/.generated
+"${WASM_BINDGEN:-wasm-bindgen}" target/wasm32-unknown-unknown/release/frametape_web.wasm --target web --out-dir app/.generated
+nodebox npm ci --ignore-scripts
+nodebox npm run build

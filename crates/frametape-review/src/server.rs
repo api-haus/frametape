@@ -6,6 +6,11 @@ use std::hash::{Hash, Hasher};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{
+    Arc, RwLock,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread::JoinHandle;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 fn id(path: &Path) -> String {
@@ -101,7 +106,24 @@ fn file_reply(request: Request, path: &Path, mime: &str) -> io::Result<()> {
     ))
 }
 
-pub fn serve(path: PathBuf, port: u16, no_open: bool) -> io::Result<()> {
+#[derive(Clone)]
+struct Library {
+    root: PathBuf,
+    cache: PathBuf,
+}
+
+/// One review instance. Owns its listener and worker; dropping it drains the current request.
+pub struct AppServer {
+    pub url: String,
+    library: Arc<RwLock<Library>>,
+    origin: String,
+    prefix: String,
+    stop: Arc<AtomicBool>,
+    server: Arc<Server>,
+    worker: Option<JoinHandle<()>>,
+}
+
+fn library(path: &Path) -> io::Result<(Library, Option<String>)> {
     let path = fs::canonicalize(path)?;
     let selected = path.is_file().then(|| id(&path));
     let root = if path.is_dir() {
@@ -109,26 +131,132 @@ pub fn serve(path: PathBuf, port: u16, no_open: bool) -> io::Result<()> {
     } else {
         path.parent().unwrap().to_owned()
     };
-    let cache = root.join(".frametape-cache");
+    let cache_home = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+        .ok_or_else(|| io::Error::other("cache directory unavailable"))?;
+    let cache = cache_home.join("frametape").join(id(&root));
     fs::create_dir_all(&cache)?;
-    let server = Server::http(("127.0.0.1", port)).map_err(io::Error::other)?;
-    let address = server
-        .server_addr()
-        .to_ip()
-        .ok_or_else(|| io::Error::other("missing bound address"))?;
-    let origin = format!("http://{address}");
-    let mut random = [0u8; 24];
-    getrandom::fill(&mut random).map_err(|error| io::Error::other(error.to_string()))?;
-    let token = random
-        .iter()
-        .map(|n| format!("{n:02x}"))
-        .collect::<String>();
-    let prefix = format!("/{token}/");
-    let url = format!(
-        "{origin}{prefix}{}",
-        selected.map_or(String::new(), |id| format!("?take={id}"))
-    );
-    println!("{url}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            cache_home.join("frametape"),
+            fs::Permissions::from_mode(0o700),
+        )?;
+    }
+    Ok((Library { root, cache }, selected))
+}
+
+impl AppServer {
+    pub fn start(path: PathBuf, port: u16) -> io::Result<Self> {
+        let (initial, selected) = library(&path)?;
+        let server = Arc::new(Server::http(("127.0.0.1", port)).map_err(io::Error::other)?);
+        let address = server
+            .server_addr()
+            .to_ip()
+            .ok_or_else(|| io::Error::other("missing bound address"))?;
+        let origin = format!("http://{address}");
+        let mut random = [0u8; 24];
+        getrandom::fill(&mut random).map_err(|error| io::Error::other(error.to_string()))?;
+        let token = random
+            .iter()
+            .map(|n| format!("{n:02x}"))
+            .collect::<String>();
+        let prefix = format!("/{token}/");
+        let url = format!(
+            "{origin}{prefix}{}",
+            selected.map_or(String::new(), |id| format!("?take={id}"))
+        );
+        let shared = Arc::new(RwLock::new(initial));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (listener, state, stopping, allowed_origin, route_prefix) = (
+            server.clone(),
+            shared.clone(),
+            stop.clone(),
+            origin.clone(),
+            prefix.clone(),
+        );
+        let worker = std::thread::spawn(move || {
+            for request in listener.incoming_requests() {
+                if stopping.load(Ordering::Relaxed) {
+                    break;
+                }
+                let accepted = (|| -> io::Result<()> {
+                    let host = request
+                        .headers()
+                        .iter()
+                        .find(|h| h.field.equiv("Host"))
+                        .map(|h| h.value.as_str());
+                    if host != Some(address.to_string().as_str()) {
+                        return reply(request, 403, "text/plain", "invalid host");
+                    }
+                    if request.method() == &Method::Post
+                        && !request
+                            .headers()
+                            .iter()
+                            .any(|h| h.field.equiv("Origin") && h.value.as_str() == allowed_origin)
+                    {
+                        return reply(request, 403, "text/plain", "invalid origin");
+                    }
+                    let route = request
+                        .url()
+                        .split('?')
+                        .next()
+                        .unwrap_or("")
+                        .strip_prefix(&route_prefix)
+                        .map(str::to_owned);
+                    let Some(route) = route else {
+                        return reply(request, 404, "text/plain", "unknown session");
+                    };
+                    let library = state
+                        .read()
+                        .map_err(|_| io::Error::other("library state poisoned"))?
+                        .clone();
+                    handle(request, &route, &library.root, &library.cache)
+                })();
+                if let Err(error) = accepted {
+                    eprintln!("app request: {error}");
+                }
+            }
+        });
+        Ok(Self {
+            url,
+            library: shared,
+            origin,
+            prefix,
+            stop,
+            server,
+            worker: Some(worker),
+        })
+    }
+    pub fn open(&self, path: &Path) -> io::Result<String> {
+        let (next, selected) = library(path)?;
+        *self
+            .library
+            .write()
+            .map_err(|_| io::Error::other("library state poisoned"))? = next;
+        Ok(format!(
+            "{}{}{}",
+            self.origin,
+            self.prefix,
+            selected.map_or(String::new(), |id| format!("?take={id}"))
+        ))
+    }
+}
+impl Drop for AppServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        self.server.unblock();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+pub fn serve(path: PathBuf, port: u16, no_open: bool) -> io::Result<()> {
+    let mut app = AppServer::start(path, port)?;
+    println!("{}", app.url);
     if !no_open {
         #[cfg(target_os = "macos")]
         let mut opener = Command::new("open");
@@ -141,47 +269,17 @@ pub fn serve(path: PathBuf, port: u16, no_open: bool) -> io::Result<()> {
         #[cfg(all(not(windows), not(target_os = "macos")))]
         let mut opener = Command::new("xdg-open");
         opener
-            .arg(&url)
+            .arg(&app.url)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
     }
-    for request in server.incoming_requests() {
-        let host = request
-            .headers()
-            .iter()
-            .find(|h| h.field.equiv("Host"))
-            .map(|h| h.value.as_str());
-        if host != Some(address.to_string().as_str()) {
-            reply(request, 403, "text/plain", "invalid host")?;
-            continue;
-        }
-        if request.method() == &Method::Post
-            && !request
-                .headers()
-                .iter()
-                .any(|h| h.field.equiv("Origin") && h.value.as_str() == origin)
-        {
-            reply(request, 403, "text/plain", "invalid origin")?;
-            continue;
-        }
-        let route = request
-            .url()
-            .split('?')
-            .next()
-            .unwrap_or("")
-            .strip_prefix(&prefix)
-            .map(str::to_owned);
-        let Some(route) = route else {
-            reply(request, 404, "text/plain", "unknown session")?;
-            continue;
-        };
-        if let Err(error) = handle(request, &route, &root, &cache) {
-            eprintln!("app request: {error}");
-        }
-    }
-    Ok(())
+    app.worker
+        .take()
+        .unwrap()
+        .join()
+        .map_err(|_| io::Error::other("review server worker panicked"))
 }
 
 fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::Result<()> {
@@ -195,6 +293,15 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
             "text/html",
             include_str!("../../../app/catalog.html"),
         );
+    }
+    let asset = match route {
+        "entry.js" => Some(include_str!("../../../app/entry.js")),
+        "catalog.js" => Some(include_str!("../../../app/catalog.js")),
+        "host.js" => Some(include_str!("../../../app/host.js")),
+        _ => None,
+    };
+    if let Some(asset) = asset {
+        return reply(request, 200, "text/javascript", asset);
     }
     if route == "catalog" {
         let mut rows = Vec::new();
@@ -241,6 +348,70 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
             "recording not found; refresh catalog",
         );
     };
+    if parts[0] == "download" {
+        return request.respond(
+            Response::from_file(File::open(&path)?)
+                .with_header(header("Content-Type", "application/x-frametape"))
+                .with_header(header(
+                    "Content-Disposition",
+                    "attachment; filename=recording.ftape",
+                )),
+        );
+    }
+    if parts[0] == "copy" && request.method() == &Method::Post {
+        let result = (|| -> io::Result<PathBuf> {
+            let mut data = Vec::new();
+            request
+                .as_reader()
+                .take(8 * 1024 * 1024 + 1)
+                .read_to_end(&mut data)?;
+            if data.len() > 8 * 1024 * 1024 {
+                return Err(io::Error::other("annotation document exceeds8MiB"));
+            }
+            let data: Value = serde_json::from_slice(&data).map_err(io::Error::other)?;
+            let annotations: Annotations =
+                serde_json::from_value(data["annotations"].clone()).map_err(io::Error::other)?;
+            let mut source = File::open(&path)?;
+            if data["revision"].as_str()
+                != Some(export::cache_key_metadata(&path, &source.metadata()?)?.as_str())
+            {
+                return Err(io::Error::other(
+                    "Recording changed; reopen before exporting this draft",
+                ));
+            }
+            let mut random = [0u8; 16];
+            getrandom::fill(&mut random).map_err(|error| io::Error::other(error.to_string()))?;
+            let name = random
+                .iter()
+                .map(|n| format!("{n:02x}"))
+                .collect::<String>();
+            let destination = cache.join(format!("copy-{name}.ftape"));
+            let mut output = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&destination)?;
+            io::copy(&mut source, &mut output)?;
+            output.sync_all()?;
+            drop(output);
+            if let Err(error) = frametape::save_annotations(&destination, &annotations) {
+                let _ = fs::remove_file(&destination);
+                return Err(error);
+            }
+            Ok(destination)
+        })();
+        return match result {
+            Ok(copy) => {
+                let file = File::open(&copy)?;
+                let response = request.respond(
+                    Response::from_file(file)
+                        .with_header(header("Content-Type", "application/x-frametape")),
+                );
+                let _ = fs::remove_file(copy);
+                response
+            }
+            Err(error) => reply(request, 422, "text/plain", error.to_string()),
+        };
+    }
     let result = (|| -> io::Result<(u16, String, Vec<u8>)> {
         let mut tape = TapeReader::open(&path)?;
         match parts[0] {
@@ -252,12 +423,14 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
                 let frames = tape.frames()?;
                 let marks = tape.annotations()?;
                 let data = json!({"stem":path.file_stem().unwrap().to_string_lossy(),"id":parts[1],"frames":frames.len(),"timeline":frames,"revision":revision(&path)?,"fps":tape.manifest.metadata["video_fps"].as_f64().unwrap_or(60.0)});
-                let html = include_str!("../../../app/annotator.html")
-                    .replace("__DATA__", &script_json(&data))
-                    .replace(
-                        "__MARKS__",
-                        &script_json(&serde_json::to_value(marks).map_err(io::Error::other)?),
-                    );
+                let template = include_str!("../../../app/annotator.html");
+                let (before, rest) = template.split_once("__DATA__").unwrap();
+                let (middle, after) = rest.split_once("__MARKS__").unwrap();
+                let html = format!(
+                    "{before}{}{middle}{}{after}",
+                    script_json(&data),
+                    script_json(&serde_json::to_value(marks).map_err(io::Error::other)?)
+                );
                 Ok((200, "text/html".into(), html.into_bytes()))
             }
             "events" => {
