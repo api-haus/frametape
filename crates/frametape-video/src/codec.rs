@@ -57,6 +57,9 @@ impl EncoderInfo {
             command.args(["-vf", filter]);
         }
         command.args(["-an", "-c:v", self.name]);
+        // Review steps frame by frame: every seek decodes from the previous keyframe, and
+        // reordered pictures defeat packet-order decoding. Encoder defaults are 250 and B-pyramids.
+        command.args(["-g", "30", "-bf", "0"]);
         if self.name.ends_with("_nvenc") {
             command.args([
                 "-preset", "p5", "-tune", "hq", "-rc", "constqp", "-qp", "18",

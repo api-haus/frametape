@@ -115,16 +115,21 @@ export class VideoPlayer {
    this.showPreview(image);
    this.publish(this.wanted,picture,this.at,source);this.prefetch.warm(picture);this.state();return;
   }
-  this.prefetch?.stop();
   if(this.preview?.style.visibility!=='visible')this.showPreview(this.prefetch?.get(this.picture));
   this.cachedPicture=null;this.pendingSeek=true;
-  const request=this.seekRequest={};
-  this.seekReady=this.decoder.seek(this.at,this.seekBounds).then(complete=>{
-   if(!complete)return false;
-   if(this.disposed||request!==this.seekRequest)return false;
-   this.pendingSeek=null;this.clearPreview();this.sync();this.warm();this.state();return true;
-  },error=>{
-   if(!this.disposed&&request===this.seekRequest){this.pendingSeek=null;this.seekError=error.message;this.state()}return false;
+  const request=this.seekRequest={},current=()=>!this.disposed&&request===this.seekRequest;
+  const decoded=useCache&&this.preview&&source>=this.pictureTimes[0]?this.prefetch?.request(picture):null;
+  if(!decoded)this.prefetch?.stop();
+  this.seekReady=Promise.resolve(decoded).then(image=>{
+   if(!current())return false;
+   if(image){this.pendingSeek=null;this.cachedPicture=picture;this.picture=picture;this.showPreview(image);this.publish(this.wanted,picture,this.at,source);this.state();return true}
+   if(decoded)this.prefetch.stop();
+   return this.decoder.seek(this.at,this.seekBounds).then(complete=>{
+    if(!complete||!current())return false;
+    this.pendingSeek=null;this.clearPreview();this.sync();this.warm();this.state();return true;
+   });
+  }).catch(error=>{
+   if(current()){this.pendingSeek=null;this.seekError=error.message;this.state()}return false;
   });
   this.state();
  }

@@ -11,5 +11,6 @@ readiness while a detached video decoder yields transparent canvas snapshots; at
 decoders to the document. Serialize native seeks: canceling a JS wait does not cancel GStreamer's seek.
 Player instrument: `tools/bench-player/run.py` drives `--example player_bench`; `--play` records continuous
 presentation, `--step` paused stepping. A hidden Hyprland workspace delivers no frame callbacks and Xvfb
-skips the GPU path: measure in a private headless Wayland compositor, compare a reference player there.
+skips the GPU path: measure under `tools/bench-player/headless-wayland`, compare a reference player there.
+`tools/bench-player/browser.py` runs the same workloads against the standalone browser app.
 On NVIDIA Wayland WebKit's SHM renderer collapses with window pixels and its GL video sink paints green.

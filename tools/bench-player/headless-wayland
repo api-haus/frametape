@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Run a command inside a private GPU Wayland compositor (weston on PATH); nothing reaches the user's seat.
+# usage: [SIZE=5120x2880] [SCALE=2] [MHZ=165000] headless-wayland <command...>
+set -u
+size=${SIZE:-5120x2880}; socket=frametape-bench-$$
+env -u DISPLAY -u WAYLAND_DISPLAY weston --backend=headless --renderer=gl --width="${size%x*}" --height="${size#*x}" \
+  --scale="${SCALE:-2}" --refresh-rate="${MHZ:-165000}" --shell=kiosk --socket="$socket" --no-config --idle-time=0 --log=/dev/null &
+compositor=$!
+for _ in $(seq 50); do [ -S "$XDG_RUNTIME_DIR/$socket" ] && break; sleep 0.1; done
+env -u DISPLAY WAYLAND_DISPLAY="$socket" GDK_BACKEND=wayland "$@"
+status=$?
+kill "$compositor"; wait "$compositor" 2>/dev/null
+exit "$status"
