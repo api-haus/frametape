@@ -29,12 +29,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_inner_size(LogicalSize::new(1400., 900.))
         .build(&events)?;
     let base = server.url.split('?').next().unwrap().to_owned();
+    let diagnostic = args
+        .next()
+        .map(std::fs::read_to_string)
+        .transpose()?
+        .unwrap_or_default();
+    let observer = format!(
+        "window.__benchImages={};{};{}",
+        std::env::var_os("FRAMETAPE_BENCH_IMAGES").is_some(),
+        include_str!("../../../tools/bench-player/instrument.js"),
+        diagnostic
+    );
     let builder = wry::WebViewBuilder::new()
         .with_url(&server.url)
-        .with_initialization_script_for_main_only(
-            include_str!("../../../tools/bench-player/instrument.js"),
-            false,
-        )
+        .with_initialization_script_for_main_only(&observer, false)
         .with_ipc_handler(move |request| {
             if !request.uri().to_string().starts_with(&base) {
                 return;

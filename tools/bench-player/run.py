@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Native seek workload: real XTest input, isolated DISPLAY, JSON performance receipts."""
-import argparse,json,os,subprocess,time
+import argparse,json,os,platform,subprocess,time
 from pathlib import Path
-p=argparse.ArgumentParser();p.add_argument('binary');p.add_argument('recording');p.add_argument('output');p.add_argument('--idle-seconds',type=float,default=3);args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('binary');p.add_argument('recording');p.add_argument('output');p.add_argument('--idle-seconds',type=float,default=3);p.add_argument('--commit',default=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip());args=p.parse_args();began=time.monotonic()
 base=Path(args.output).resolve();base.mkdir(parents=True,exist_ok=True);metrics=base/'events.jsonl';assert not metrics.exists(),metrics
 recording=Path(args.recording).resolve();binary=Path(args.binary).resolve()
 process=subprocess.Popen([str(binary),str(recording),str(metrics)],stdout=open(base/'app.log','w'),stderr=subprocess.STDOUT)
@@ -32,7 +32,7 @@ try:
  for position in [.2,.55,.8]:
   action('scrub',position);time.sleep(args.idle_seconds)
   action('fwd');time.sleep(.08);action('back');time.sleep(.08);action('fwd');time.sleep(args.idle_seconds)
- result={'binary':str(binary),'recording':str(recording),'idle_seconds':args.idle_seconds,'display':os.environ.get('DISPLAY'),'ready':ready,'samples':samples}
+ result={'commit':args.commit,'machine':platform.node(),'system':platform.platform(),'profile':'release','wall_ms':(time.monotonic()-began)*1000,'binary':str(binary),'recording':str(recording),'idle_seconds':args.idle_seconds,'display':os.environ.get('DISPLAY'),'ready':ready,'samples':samples}
  (base/'result.json').write_text(json.dumps(result,indent=2))
 finally:
  process.terminate()

@@ -27,7 +27,7 @@ button:hover { background:#39404c; } button:focus-visible, input:focus-visible, 
 @media(max-width:650px) { #transport { flex-wrap:wrap;height:58px; } #track {height:92px;} #status {max-width:95%;font-size:11px;} }
 </style>
 <div id="stage">
-  <div id="frame"><video id="v" muted playsinline preload="auto"></video><span id="coverage" style="position:absolute;top:8px;right:12px;background:#101216dd;padding:4px 8px"></span><canvas id="ink" aria-label="Annotation canvas"></canvas><textarea id="label" rows="1" aria-label="Annotation text"></textarea></div>
+  <div id="frame"><video id="v" muted playsinline preload="auto"></video><canvas id="decoded-frame" style="visibility:hidden;pointer-events:none" aria-hidden="true"></canvas><span id="coverage" style="position:absolute;top:8px;right:12px;background:#101216dd;padding:4px 8px"></span><canvas id="ink" aria-label="Annotation canvas"></canvas><textarea id="label" rows="1" aria-label="Annotation text"></textarea></div>
   <div id="toolbar"></div>
 </div>
 <div id="scrob">
@@ -88,7 +88,7 @@ function seek(f) {
 }
 function setPlaying(on) { if(on)player.play();else player.pause(); }
 player = N ? new parent.FrametapeVideoPlayer({
-  video:v, frames:TAKE.timeline,
+  video:v, frames:TAKE.timeline, preview:$('decoded-frame'), prefetch:new parent.FrametapeDecodedFrames({document}),
   open:compatible=>HOST.video(TAKE.id,compatible),
   onPosition:({index,missing,picture,uncovered,sourceTimeNs})=>{
     const changed=index!==cur||publishedFrame!==index;cur=index;positionNs=sourceTimeNs;

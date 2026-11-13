@@ -299,6 +299,8 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
         "catalog.js" => Some(include_str!("../../../app/catalog.js")),
         "host.js" => Some(include_str!("../../../app/host.js")),
         "player.js" => Some(include_str!("../../../app/player.js")),
+        "decoded-frames.js" => Some(include_str!("../../../app/decoded-frames.js")),
+        "video-decoder.js" => Some(include_str!("../../../app/video-decoder.js")),
         _ => None,
     };
     if let Some(asset) = asset {

@@ -1,9 +1,11 @@
 import {VideoPlayer} from './player.js';
+import {DecodedFrames} from './decoded-frames.js';
 export function mount(host){
 
 const $=id=>document.getElementById(id);
 window.frametapeHost=host;
 window.FrametapeVideoPlayer=VideoPlayer;
+window.FrametapeDecodedFrames=DecodedFrames;
 if(host.saveMode==='draft'){document.querySelector('#empty p').textContent='Open local .ftape files to play, inspect and annotate. Drafts stay in this browser; export a new recording to share them.';$('download').textContent='Export .ftape';}
 let records=[],selected=null,timer,dirty=false,eventFrame=null,eventBusy=false;
 const previews=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){const img=entry.target;previews.unobserve(img);host.frame(img.dataset.take,0).then(url=>{if(url)img.src=url;else img.style.visibility='hidden'}).catch(()=>{img.style.visibility='hidden'})}},{root:$('library'),rootMargin:'200px'});
