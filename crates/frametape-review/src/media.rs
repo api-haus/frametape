@@ -11,6 +11,7 @@ use std::{
     io::{self, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::{Arc, Mutex},
 };
 pub struct Media {
     pub path: PathBuf,
@@ -162,7 +163,30 @@ pub struct Playback {
     pub descriptor: Value,
 }
 
-pub fn playback(path: &Path, cache: &Path, compatible: bool) -> io::Result<Option<Playback>> {
+/// Prepared video for one recording revision. Resolved once: every byte-range request asks again.
+pub fn playback(path: &Path, cache: &Path, compatible: bool) -> io::Result<Option<Arc<Playback>>> {
+    static RESOLVED: Mutex<Vec<(String, PathBuf, bool, Option<Arc<Playback>>)>> =
+        Mutex::new(Vec::new());
+    let revision = crate::export::cache_key(path)?;
+    let mut resolved = RESOLVED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((.., hit)) = resolved
+        .iter()
+        .find(|(r, c, m, _)| *r == revision && c == cache && *m == compatible)
+    {
+        if hit.as_ref().is_none_or(|p| p.path.exists()) {
+            return Ok(hit.clone());
+        }
+    }
+    let playback = prepare(path, cache, compatible)?.map(Arc::new);
+    resolved.retain(|(r, c, m, _)| !(*r == revision && c == cache && *m == compatible));
+    if resolved.len() >= 64 {
+        resolved.remove(0);
+    }
+    resolved.push((revision, cache.to_owned(), compatible, playback.clone()));
+    Ok(playback)
+}
+
+fn prepare(path: &Path, cache: &Path, compatible: bool) -> io::Result<Option<Playback>> {
     let Some(media) = open(path, cache)? else {
         return Ok(None);
     };

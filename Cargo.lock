@@ -807,6 +807,7 @@ dependencies = [
  "rfd",
  "serde_json",
  "tao",
+ "webkit2gtk",
  "wry",
 ]
 

@@ -28,6 +28,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_title("Frametape player benchmark")
         .with_inner_size(LogicalSize::new(1400., 900.))
         .build(&events)?;
+    #[cfg(target_os = "linux")]
+    platform::configure_window(window.gtk_window());
     let base = server.url.split('?').next().unwrap().to_owned();
     let diagnostic = args
         .next()
@@ -35,8 +37,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .transpose()?
         .unwrap_or_default();
     let observer = format!(
-        "window.__benchImages={};{};{}",
+        "window.__benchImages={};window.__benchPlay={};window.__benchStep={};{};{}",
         std::env::var_os("FRAMETAPE_BENCH_IMAGES").is_some(),
+        std::env::var_os("FRAMETAPE_BENCH_PLAY").is_some(),
+        std::env::var_os("FRAMETAPE_BENCH_STEP").is_some(),
         include_str!("../../../tools/bench-player/instrument.js"),
         diagnostic
     );
@@ -61,6 +65,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     #[cfg(not(target_os = "linux"))]
     let view = builder.build(&window)?;
+    #[cfg(target_os = "linux")]
+    platform::configure_view(&view);
     events.run_return(|event, _, flow| {
         *flow = ControlFlow::Wait;
         if matches!(

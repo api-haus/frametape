@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Native seek workload: real XTest input, isolated DISPLAY, JSON performance receipts."""
+"""Native player workloads: XTest seek latency (isolated DISPLAY) or --play continuous playback. JSON receipts."""
 import argparse,json,os,platform,subprocess,time
 from pathlib import Path
-p=argparse.ArgumentParser();p.add_argument('binary');p.add_argument('recording');p.add_argument('output');p.add_argument('--idle-seconds',type=float,default=3);p.add_argument('--commit',default=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip());args=p.parse_args();began=time.monotonic()
+p=argparse.ArgumentParser();p.add_argument('binary');p.add_argument('recording');p.add_argument('output');p.add_argument('--idle-seconds',type=float,default=3);p.add_argument('--play',action='store_true');p.add_argument('--step',action='store_true');p.add_argument('--script',help='extra observer script');p.add_argument('--commit',default=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip());args=p.parse_args();began=time.monotonic()
 base=Path(args.output).resolve();base.mkdir(parents=True,exist_ok=True);metrics=base/'events.jsonl';assert not metrics.exists(),metrics
 recording=Path(args.recording).resolve();binary=Path(args.binary).resolve()
-process=subprocess.Popen([str(binary),str(recording),str(metrics)],stdout=open(base/'app.log','w'),stderr=subprocess.STDOUT)
+process=subprocess.Popen([str(binary),str(recording),str(metrics)]+([str(Path(args.script).resolve())]if args.script else[]),env={**os.environ,**({'FRAMETAPE_BENCH_PLAY':'1'}if args.play else{}),**({'FRAMETAPE_BENCH_STEP':'1'}if args.step else{})},stdout=open(base/'app.log','w'),stderr=subprocess.STDOUT)
 try:
  def records():
   if not metrics.exists():return []
@@ -19,6 +19,12 @@ try:
    time.sleep(.02)
   raise RuntimeError(records()[-5:])
  ready=wait(lambda r:r['type']=='ready')
+ if args.play:
+  playback=wait(lambda r:r['type']=='playback',300);print(json.dumps(playback),flush=True)
+  (base/'result.json').write_text(json.dumps({'commit':args.commit,'machine':platform.node(),'system':platform.platform(),'profile':'release','binary':str(binary),'recording':str(recording),'display':os.environ.get('WAYLAND_DISPLAY')or os.environ.get('DISPLAY'),'ready':ready,'playback':playback},indent=2));raise SystemExit
+ if args.step:
+  wait(lambda r:r['type']=='steps',300);found=records();result={'commit':args.commit,'machine':platform.node(),'system':platform.platform(),'profile':'release','binary':str(binary),'recording':str(recording),'display':os.environ.get('WAYLAND_DISPLAY')or os.environ.get('DISPLAY'),'ready':ready,'samples':[r for r in found if r['type']=='sample'],'held':[r for r in found if r['type']=='held'],'warnings':[r for r in found if r['type']=='warning']}
+  (base/'result.json').write_text(json.dumps(result,indent=2));raise SystemExit
  window=subprocess.check_output(['xdotool','search','--onlyvisible','--pid',str(process.pid)],text=True).split()[0]
  samples=[]
  def click(point):subprocess.run(['xdotool','mousemove','--window',window,str(round(point['x']*ready['dpr'])),str(round(point['y']*ready['dpr'])),'click','1'],check=True,stdout=subprocess.DEVNULL)

@@ -38,6 +38,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_title("Frametape")
         .with_inner_size(LogicalSize::new(1400.0, 900.0))
         .build(&events)?;
+    #[cfg(target_os = "linux")]
+    platform::configure_window(window.gtk_window());
     let proxy = events.create_proxy();
     let base = server.url.split('?').next().unwrap().to_owned();
     let allowed = base.clone();
@@ -71,6 +73,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     #[cfg(not(target_os = "linux"))]
     let view = view.build(&window)?;
+    #[cfg(target_os = "linux")]
+    platform::configure_view(&view);
     let mut dirty = false;
     events.run_return(|event,_,flow| {
         *flow=ControlFlow::Wait;

@@ -112,7 +112,7 @@ struct Library {
     cache: PathBuf,
 }
 
-/// One review instance. Owns its listener and worker; dropping it drains the current request.
+/// One review instance. Owns its listener and workers; dropping it drains the current request.
 pub struct AppServer {
     pub url: String,
     library: Arc<RwLock<Library>>,
@@ -120,7 +120,7 @@ pub struct AppServer {
     prefix: String,
     stop: Arc<AtomicBool>,
     server: Arc<Server>,
-    worker: Option<JoinHandle<()>>,
+    workers: Vec<JoinHandle<()>>,
 }
 
 fn library(path: &Path) -> io::Result<(Library, Option<String>)> {
@@ -177,49 +177,60 @@ impl AppServer {
             origin.clone(),
             prefix.clone(),
         );
-        let worker = std::thread::spawn(move || {
-            for request in listener.incoming_requests() {
-                if stopping.load(Ordering::Relaxed) {
-                    break;
-                }
-                let accepted = (|| -> io::Result<()> {
-                    let host = request
-                        .headers()
-                        .iter()
-                        .find(|h| h.field.equiv("Host"))
-                        .map(|h| h.value.as_str());
-                    if host != Some(address.to_string().as_str()) {
-                        return reply(request, 403, "text/plain", "invalid host");
+        // A paused player holds its video response open; seeks and panels need other workers.
+        let workers = (0..4)
+            .map(|_| {
+                let (listener, state, stopping, allowed_origin, route_prefix) = (
+                    listener.clone(),
+                    state.clone(),
+                    stopping.clone(),
+                    allowed_origin.clone(),
+                    route_prefix.clone(),
+                );
+                std::thread::spawn(move || {
+                    for request in listener.incoming_requests() {
+                        if stopping.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let accepted = (|| -> io::Result<()> {
+                            let host = request
+                                .headers()
+                                .iter()
+                                .find(|h| h.field.equiv("Host"))
+                                .map(|h| h.value.as_str());
+                            if host != Some(address.to_string().as_str()) {
+                                return reply(request, 403, "text/plain", "invalid host");
+                            }
+                            if request.method() == &Method::Post
+                                && !request.headers().iter().any(|h| {
+                                    h.field.equiv("Origin") && h.value.as_str() == allowed_origin
+                                })
+                            {
+                                return reply(request, 403, "text/plain", "invalid origin");
+                            }
+                            let route = request
+                                .url()
+                                .split('?')
+                                .next()
+                                .unwrap_or("")
+                                .strip_prefix(&route_prefix)
+                                .map(str::to_owned);
+                            let Some(route) = route else {
+                                return reply(request, 404, "text/plain", "unknown session");
+                            };
+                            let library = state
+                                .read()
+                                .map_err(|_| io::Error::other("library state poisoned"))?
+                                .clone();
+                            handle(request, &route, &library.root, &library.cache)
+                        })();
+                        if let Err(error) = accepted {
+                            eprintln!("app request: {error}");
+                        }
                     }
-                    if request.method() == &Method::Post
-                        && !request
-                            .headers()
-                            .iter()
-                            .any(|h| h.field.equiv("Origin") && h.value.as_str() == allowed_origin)
-                    {
-                        return reply(request, 403, "text/plain", "invalid origin");
-                    }
-                    let route = request
-                        .url()
-                        .split('?')
-                        .next()
-                        .unwrap_or("")
-                        .strip_prefix(&route_prefix)
-                        .map(str::to_owned);
-                    let Some(route) = route else {
-                        return reply(request, 404, "text/plain", "unknown session");
-                    };
-                    let library = state
-                        .read()
-                        .map_err(|_| io::Error::other("library state poisoned"))?
-                        .clone();
-                    handle(request, &route, &library.root, &library.cache)
-                })();
-                if let Err(error) = accepted {
-                    eprintln!("app request: {error}");
-                }
-            }
-        });
+                })
+            })
+            .collect();
         Ok(Self {
             url,
             library: shared,
@@ -227,7 +238,7 @@ impl AppServer {
             prefix,
             stop,
             server,
-            worker: Some(worker),
+            workers,
         })
     }
     pub fn open(&self, path: &Path) -> io::Result<String> {
@@ -247,8 +258,10 @@ impl AppServer {
 impl Drop for AppServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        self.server.unblock();
-        if let Some(worker) = self.worker.take() {
+        for _ in &self.workers {
+            self.server.unblock();
+        }
+        for worker in self.workers.drain(..) {
             let _ = worker.join();
         }
     }
@@ -275,11 +288,12 @@ pub fn serve(path: PathBuf, port: u16, no_open: bool) -> io::Result<()> {
             .stderr(Stdio::null())
             .spawn()?;
     }
-    app.worker
-        .take()
-        .unwrap()
-        .join()
-        .map_err(|_| io::Error::other("review server worker panicked"))
+    for worker in app.workers.drain(..) {
+        worker
+            .join()
+            .map_err(|_| io::Error::other("review server worker panicked"))?;
+    }
+    Ok(())
 }
 
 fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::Result<()> {
@@ -426,7 +440,7 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
                 let compatible = parts.get(2) == Some(&"1");
                 let prepared = crate::media::playback(&path, cache, compatible)?
                     .ok_or_else(|| io::Error::other("Recording has no video"))?;
-                let mut data = prepared.descriptor;
+                let mut data = prepared.descriptor.clone();
                 data["url"] = json!(format!("video/{}/{}", parts[1], u8::from(compatible)));
                 Ok((200, "application/json".into(), serde_json::to_vec(&data)?))
             }
