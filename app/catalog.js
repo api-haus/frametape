@@ -1,9 +1,11 @@
+import {VideoPlayer} from './player.js';
 export function mount(host){
 
 const $=id=>document.getElementById(id);
 window.frametapeHost=host;
+window.FrametapeVideoPlayer=VideoPlayer;
 if(host.saveMode==='draft'){document.querySelector('#empty p').textContent='Open local .ftape files to play, inspect and annotate. Drafts stay in this browser; export a new recording to share them.';$('download').textContent='Export .ftape';}
-let records=[],selected=null,timer,dirty=false;
+let records=[],selected=null,timer,dirty=false,eventFrame=null,eventBusy=false;
 const previews=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){const img=entry.target;previews.unobserve(img);host.frame(img.dataset.take,0).then(url=>{if(url)img.src=url;else img.style.visibility='hidden'}).catch(()=>{img.style.visibility='hidden'})}},{root:$('library'),rootMargin:'200px'});
 const size=n=>n>=1e9?(n/1e9).toFixed(1)+' GB':n>=1e6?(n/1e6).toFixed(1)+' MB':(n/1e3).toFixed(1)+' KB';
 function draw(){
@@ -39,9 +41,20 @@ addEventListener('message',event=>{
   if(event.source!==$('review').contentWindow||event.data?.id!==selected)return;
   if(event.data.type==='dirty'){dirty=event.data.value;window.frametapeNative?.dirty(dirty);return}
   if(event.data.type!=='frame')return;
-  const index=event.data.frame;$('frame-label').textContent=index==null?'Channel events':'Frame '+index+' · events';clearTimeout(timer);
-  timer=setTimeout(async()=>{try{const events=await host.events(selected,index);$('events').textContent=events.length?JSON.stringify(events,null,2):'No channel events in this frame interval.'}catch(e){$('events').textContent=e.message}},100);
+  eventFrame=event.data.frame;
+  refreshEvents();
 });
+function refreshEvents(){
+  if(timer||eventBusy)return;
+  timer=setTimeout(async()=>{
+    timer=null;eventBusy=true;const id=selected,index=eventFrame;
+    try{
+      const events=await host.events(id,index);
+      if(selected===id){$('frame-label').textContent=index==null?'Channel events':'Frame '+index+' · events';$('events').textContent=events.length?JSON.stringify(events,null,2):'No channel events in this frame interval.'}
+    }catch(error){if(selected===id)$('events').textContent=error.message}
+    finally{eventBusy=false;if(selected!==id||eventFrame!==index)refreshEvents()}
+  },100);
+}
 function leave(){if(dirty&&!confirm('Discard unsaved annotations and open another recording?'))return false;dirty=false;$('review').contentWindow?.postMessage({type:'discard'},'*');window.frametapeNative?.dirty(false);return true}
 $('open-file').hidden=$('open-folder').hidden=!host.canOpen;
 $('open-file').onclick=()=>host.openFiles().catch(e=>{$('notice').textContent=e.message});

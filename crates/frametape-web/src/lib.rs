@@ -72,6 +72,16 @@ impl Recording {
         )
         .unwrap()
     }
+    pub fn media_plan(&self, probe: &str) -> Result<String, JsValue> {
+        let probe = serde_json::from_str(probe).map_err(error)?;
+        let plan = frametape::playback::PlaybackPlan::new(&self.frames, &probe).map_err(error)?;
+        serde_json::to_string(&plan).map_err(error)
+    }
+    pub fn verify_media(&self, plan: &str, probe: &str) -> Result<String, JsValue> {
+        let plan: frametape::playback::PlaybackPlan = serde_json::from_str(plan).map_err(error)?;
+        let probe = serde_json::from_str(probe).map_err(error)?;
+        serde_json::to_string(&plan.verify(&probe).map_err(error)?).map_err(error)
+    }
     pub fn annotations(&self, text: &str) -> Result<String, JsValue> {
         let value = Annotations::parse(text).map_err(error)?;
         frametape::validate_annotations(&value, self.manifest.frame_count).map_err(error)?;

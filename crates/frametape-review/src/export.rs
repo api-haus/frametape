@@ -20,89 +20,6 @@ pub fn cache_key_metadata(path: &Path, stat: &fs::Metadata) -> io::Result<String
     Ok(format!("{:016x}", hash.finish()))
 }
 
-pub struct Media {
-    pub path: PathBuf,
-    pub width: u32,
-    pub height: u32,
-    pub fps: f64,
-}
-
-pub fn media(path: &Path, cache: &Path) -> io::Result<Option<Media>> {
-    let mut tape = TapeReader::open(path)?;
-    let candidates = tape
-        .manifest
-        .attachments
-        .iter()
-        .filter(|a| a.media_type.starts_with("video/"))
-        .collect::<Vec<_>>();
-    let attachment = candidates
-        .iter()
-        .find(|a| a.media_type == "video/mp4")
-        .or(candidates.first())
-        .cloned()
-        .cloned();
-    let Some(attachment) = attachment else {
-        return Ok(None);
-    };
-    let extension = Path::new(&attachment.path)
-        .extension()
-        .and_then(|x| x.to_str())
-        .filter(|x| ["mp4", "mkv", "webm", "h264"].contains(x))
-        .unwrap_or("video");
-    let (crc, bytes) = tape.member_fingerprint(&attachment.path)?;
-    let mut hash = DefaultHasher::new();
-    path.hash(&mut hash);
-    attachment.path.hash(&mut hash);
-    crc.hash(&mut hash);
-    bytes.hash(&mut hash);
-    let folder = cache.join(format!("{:016x}", hash.finish()));
-    fs::create_dir_all(&folder)?;
-    let source = folder.join(format!("original.{extension}"));
-    if !source.exists() {
-        tape.extract(&attachment.path, &source)?;
-    }
-    let result = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height,r_frame_rate",
-            "-of",
-            "json",
-        ])
-        .arg(&source)
-        .stdin(Stdio::null())
-        .output()?;
-    if !result.status.success() {
-        return Err(io::Error::other(
-            String::from_utf8_lossy(&result.stderr).into_owned(),
-        ));
-    }
-    let info: serde_json::Value =
-        serde_json::from_slice(&result.stdout).map_err(io::Error::other)?;
-    let stream = &info["streams"][0];
-    let width = stream["width"]
-        .as_u64()
-        .and_then(|n| u32::try_from(n).ok())
-        .ok_or_else(|| io::Error::other("missing video width"))?;
-    let height = stream["height"]
-        .as_u64()
-        .and_then(|n| u32::try_from(n).ok())
-        .ok_or_else(|| io::Error::other("missing video height"))?;
-    let fps = tape.manifest.metadata["video_fps"].as_f64().unwrap_or(60.0);
-    if !fps.is_finite() || fps <= 0.0 || width == 0 || height == 0 {
-        return Err(io::Error::other("invalid video dimensions/rate"));
-    }
-    Ok(Some(Media {
-        path: source,
-        width,
-        height,
-        fps,
-    }))
-}
-
 pub fn image(path: &Path, frame: u64, cache: &Path) -> io::Result<Option<PathBuf>> {
     let mut tape = TapeReader::open(path)?;
     let frames = tape.frames()?;
@@ -112,7 +29,7 @@ pub fn image(path: &Path, frame: u64, cache: &Path) -> io::Result<Option<PathBuf
     let Some(index) = frame.video_frame else {
         return Ok(None);
     };
-    let Some(media) = media(path, cache)? else {
+    let Some(media) = crate::media::open(path, cache)? else {
         return Ok(None);
     };
     let output = media
@@ -283,7 +200,11 @@ pub fn export(
     }
     fs::create_dir(output)?;
     let cache = output.join("source");
-    let media = if list { None } else { media(path, &cache)? };
+    let media = if list {
+        None
+    } else {
+        crate::media::open(path, &cache)?
+    };
     let mut rows = Vec::new();
     for index in wanted {
         let frame = &frames[index as usize];

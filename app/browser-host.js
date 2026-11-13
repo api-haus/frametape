@@ -74,7 +74,7 @@ export class BrowserReviewHost {
  row(id){const row=this.rows.get(id);if(!row||row.error)throw Error(row?.error||'Recording no longer available');return row}
  async reviewHTML(id){
   const row=this.row(id),{manifest,frames,annotations}=row.info;
-  const data={id,stem:row.name.replace(/\.ftape$/i,''),frames:frames.length,timeline:frames,revision:row.revision,fps:manifest.metadata.video_fps||60};
+  const data={id,stem:row.name.replace(/\.ftape$/i,''),frames:frames.length,timeline:frames,revision:row.revision};
   const html=FRAMETAPE_REVIEW.replace(/__DATA__|__MARKS__/g,token=>token==='__DATA__'?inline(data):inline(annotations));
   return html;
  }
@@ -95,7 +95,7 @@ export class BrowserReviewHost {
   return row.source;
  }
  async frame(id,index){const row=this.row(id),picture=row.info.frames[index]?.video_frame;if(picture==null)return null;return this.media.frame(row,await this.source(row),picture)}
- async video(id,picture=0){const row=this.row(id);return this.media.video(row,await this.source(row),picture,row.manifest.metadata.video_fps||60,row.info.frames.reduce((max,f)=>Math.max(max,f.video_frame??-1),-1)+1)}
+ async video(id,compatible=false){const row=this.row(id);return this.media.video(row,await this.source(row),compatible)}
  async events(id,index){return JSON.parse(this.row(id).state.events_at(index??-1))}
  async bundle(row,annotations){
   const writer=new zip.ZipWriter(new zip.BlobWriter('application/x-frametape'),{useWebWorkers:false});

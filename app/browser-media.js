@@ -11,6 +11,8 @@ class Codec {
  mount(fsType,options,mountPoint){return this.request('MOUNT',{fsType,options,mountPoint})}
  unmount(mountPoint){return this.request('UNMOUNT',{mountPoint})}
  exec(args,timeout){return this.request('EXEC',{args,timeout})}
+ ffprobe(args){return this.request('FFPROBE',{args})}
+ writeFile(path,data){return this.request('WRITE_FILE',{path,data})}
  readFile(path,encoding='binary'){return this.request('READ_FILE',{path,encoding})}
  deleteFile(path){return this.request('DELETE_FILE',{path})}
  terminate(){this.worker.terminate()}
@@ -28,14 +30,20 @@ async function codec(name,hash){
 
 /** Serialized software media producer; WORKERFS keeps original video file reads lazy. */
 export class BrowserMedia {
- constructor(){this.queue=Promise.resolve();this.current=null;this.frames=new Map();this.segments=new Map();this.bytes=0}
+ constructor(){this.queue=Promise.resolve();this.current=null;this.frames=new Map();this.videos=new Map();this.bytes=0}
  async ready(){
   return this.initialized??= (async()=>{
 
    const [coreBytes,wasmBytes]=await Promise.all([codec('ffmpeg-core.js',FRAMETAPE_CODEC_JS),codec('ffmpeg-core.wasm',FRAMETAPE_CODEC_WASM)]);
    const worker=URL.createObjectURL(new Blob([FRAMETAPE_FFMPEG_WORKER],{type:'text/javascript'}));
    const ffmpeg=this.ffmpeg=new Codec(worker);
-   await ffmpeg.load({coreSource:new TextDecoder().decode(coreBytes),wasmBytes});await ffmpeg.createDir('/input');return ffmpeg;
+   let coreSource=new TextDecoder().decode(coreBytes);
+   // Pinned core0.12.10 discards ffprobe's returned status, leaving Module.ret=-1
+   // after a successful probe. Preserve the actual C return value in its JS wrapper.
+   const probeCall='Module["_ffprobe"](args.length,stringsToPtr(args))';
+   if(!coreSource.includes(probeCall))throw Error('Unsupported local video probe wrapper');
+   coreSource=coreSource.replace(probeCall,'Module["ret"]='+probeCall);
+   await ffmpeg.load({coreSource,wasmBytes});await ffmpeg.createDir('/input');URL.revokeObjectURL(worker);return ffmpeg;
   })().catch(error=>{this.initialized=null;throw error});
  }
  run(row,file,work){
@@ -58,20 +66,43 @@ export class BrowserMedia {
    return url;
   });
  }
- async video(row,file,picture,fps,count){
-  if(!Number.isFinite(fps)||fps<=0)throw Error('Invalid declared video frame rate');
-  const length=Math.max(1,Math.round(fps*30)),first=Math.floor(picture/length)*length,last=Math.min(count-1,first+length-1),key=row.id+':'+first;
-  if(this.segments.has(key))return this.segments.get(key);
-  return this.run(row,file,async(ffmpeg,path)=>{
-   const filter=`select=between(n\\,${first}\\,${last}),setpts=N/(${fps}*TB),scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2`;
-   const code=await ffmpeg.exec(['-hide_banner','-loglevel','error','-y','-i',path,'-vf',filter,'-frames:v',String(last-first+1),'-r',String(fps),'-fps_mode','passthrough','-c:v','libx264','-preset','ultrafast','-crf','24','-pix_fmt','yuv420p','-movflags','+faststart','-an','-progress','/progress.txt','/preview.mp4'],120000);
-   if(code!==0)throw Error('Cannot prepare browser playback for this codec');
-   const progress=await ffmpeg.readFile('/progress.txt','utf8'),frames=[...progress.matchAll(/^frame=(\d+)$/gm)].at(-1)?.[1];
-   if(Number(frames)!==last-first+1)throw Error('Video ends before its mapped pictures');
-   const data=await ffmpeg.readFile('/preview.mp4');await ffmpeg.deleteFile('/preview.mp4');await ffmpeg.deleteFile('/progress.txt');
-   const segment={url:URL.createObjectURL(new Blob([data],{type:'video/mp4'})),first,last};this.segments.set(key,segment);
-   while(this.segments.size>2){const [old,value]=this.segments.entries().next().value;this.segments.delete(old);URL.revokeObjectURL(value.url)}
-   return segment;
-  });
+ async video(row,file,compatible=false){
+  const key=row.id+':'+compatible;
+  if(!this.videos.has(key)){
+   const prepared=this.run(row,file,async(ffmpeg,path)=>{
+    const count=row.info.frames.reduce((max,f)=>Math.max(max,f.video_frame??-1),-1)+1;
+    if(!count||count>1000000)throw Error('Video picture index is absent or exceeds the review limit');
+    const probe=async(input,decoded=false)=>{
+     const entries=decoded?'stream=codec_name,has_b_frames,time_base,width,height,start_time,duration:format=format_name,duration:frame=best_effort_timestamp_time,duration_time,pkt_duration_time:frame_side_data=':'stream=codec_name,has_b_frames,time_base,width,height,start_time,duration:format=format_name,duration:packet=pts_time,duration_time:packet_side_data=';
+     const args=['-v','fatal','-select_streams','v:0'];
+     if(!decoded)args.push('-read_intervals',`%+#${count+1}`);
+     const result=await ffmpeg.ffprobe([...args,'-show_entries',entries,'-of','json','-o','/probe.json',input]);
+     if(result!==0)throw Error('Cannot index recording video');
+     const text=await ffmpeg.readFile('/probe.json','utf8');await ffmpeg.deleteFile('/probe.json');return JSON.parse(text);
+    };
+    let info=await probe(path);
+    const copy=['h264','hevc'].includes(info.streams?.[0]?.codec_name);
+    if(!copy)info=await probe(path,true);
+    const planText=row.state.media_plan(JSON.stringify(info)),plan=JSON.parse(planText);
+    if(plan.original&&!compatible){
+     const times=(copy?info.packets.map(p=>Number(p.pts_time)):info.frames.map(f=>Number(f.best_effort_timestamp_time))).sort((a,b)=>a-b);
+     return {blob:new Blob([file],{type:plan.original_mime}),times,source_offset_ns:plan.source_offset_ns,duration:plan.duration,compatible:false};
+    }
+    const encode=compatible||!plan.copy;
+    const args=['-hide_banner','-loglevel','error','-y'];if(encode)args.push('-r',String(count/plan.duration));args.push('-i',path,'-map','0:v:0','-an');
+    if(encode)args.push('-vf',plan.filter,'-c:v','libx264','-pix_fmt','yuv420p','-preset','ultrafast','-crf','16','-bf','0','-fps_mode','passthrough','-enc_time_base','1:1000000');
+    else args.push('-c:v','copy');
+    args.push('-bsf:v',encode?plan.encode_bsf:plan.bsf,'-video_track_timescale','1000000','-movflags','+faststart','/playback.mp4');
+    if(await ffmpeg.exec(args,180000)!==0)throw Error('Cannot prepare seekable recording video');
+    const outputProbe=await probe('/playback.mp4');
+    const times=JSON.parse(row.state.verify_media(planText,JSON.stringify(outputProbe)));
+    const data=await ffmpeg.readFile('/playback.mp4');await ffmpeg.deleteFile('/playback.mp4');
+    return {blob:new Blob([data],{type:'video/mp4'}),times,source_offset_ns:plan.source_offset_ns,duration:plan.duration,compatible:encode};
+   }).catch(error=>{this.videos.delete(key);throw error});
+   this.videos.set(key,prepared);
+   while(this.videos.size>2)this.videos.delete(this.videos.keys().next().value);
+  }
+  const {blob,...media}=await this.videos.get(key),url=URL.createObjectURL(blob);
+  return {...media,url,release:()=>URL.revokeObjectURL(url)};
  }
 }

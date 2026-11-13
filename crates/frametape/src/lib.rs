@@ -1,6 +1,7 @@
 //! Engine-independent recording bundles. Producers own channels; this crate owns storage.
 pub mod annotations;
 pub mod import;
+pub mod playback;
 pub use annotations::*;
 
 use serde::{Deserialize, Serialize};

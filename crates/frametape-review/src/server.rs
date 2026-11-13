@@ -298,6 +298,7 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
         "entry.js" => Some(include_str!("../../../app/entry.js")),
         "catalog.js" => Some(include_str!("../../../app/catalog.js")),
         "host.js" => Some(include_str!("../../../app/host.js")),
+        "player.js" => Some(include_str!("../../../app/player.js")),
         _ => None,
     };
     if let Some(asset) = asset {
@@ -419,10 +420,18 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
                 let frames = tape.frames()?;
                 Ok((200,"application/json".into(),serde_json::to_vec(&json!({"manifest":tape.manifest,"frames":frames,"annotations":tape.annotations()?,"revision":revision(&path)?})).map_err(io::Error::other)?))
             }
+            "media" => {
+                let compatible = parts.get(2) == Some(&"1");
+                let prepared = crate::media::playback(&path, cache, compatible)?
+                    .ok_or_else(|| io::Error::other("Recording has no video"))?;
+                let mut data = prepared.descriptor;
+                data["url"] = json!(format!("video/{}/{}", parts[1], u8::from(compatible)));
+                Ok((200, "application/json".into(), serde_json::to_vec(&data)?))
+            }
             "review" => {
                 let frames = tape.frames()?;
                 let marks = tape.annotations()?;
-                let data = json!({"stem":path.file_stem().unwrap().to_string_lossy(),"id":parts[1],"frames":frames.len(),"timeline":frames,"revision":revision(&path)?,"fps":tape.manifest.metadata["video_fps"].as_f64().unwrap_or(60.0)});
+                let data = json!({"stem":path.file_stem().unwrap().to_string_lossy(),"id":parts[1],"frames":frames.len(),"timeline":frames,"revision":revision(&path)?});
                 let template = include_str!("../../../app/annotator.html");
                 let (before, rest) = template.split_once("__DATA__").unwrap();
                 let (middle, after) = rest.split_once("__MARKS__").unwrap();
@@ -496,31 +505,25 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
         }
     })();
     // File endpoints stay streamed and retain browser byte-range support.
-    if parts[0] == "frame" || parts[0] == "preview" || parts[0] == "video" {
+    if parts[0] == "video" {
+        return match crate::media::playback(&path, cache, parts.get(2) == Some(&"1")) {
+            Ok(Some(media)) => file_reply(request, &media.path, &media.mime),
+            Ok(None) => reply(request, 404, "text/plain", "Recording has no video"),
+            Err(error) => reply(request, 422, "text/plain", error.to_string()),
+        };
+    }
+    if parts[0] == "frame" || parts[0] == "preview" {
         let index = parts
             .get(2)
-            .and_then(|s| s.parse::<u64>().ok())
+            .and_then(|n| n.parse::<u64>().ok())
             .unwrap_or(0);
-        let rendered = if parts[0] == "video" {
-            preview(&path, cache)
-        } else {
-            export::image(&path, index, cache)
-        };
-        return match rendered {
-            Ok(Some(file)) => file_reply(
-                request,
-                &file,
-                if parts[0] == "video" {
-                    "video/mp4"
-                } else {
-                    "image/png"
-                },
-            ),
+        return match export::image(&path, index, cache) {
+            Ok(Some(file)) => file_reply(request, &file, "image/png"),
             Ok(None) => reply(
                 request,
                 404,
                 "text/plain",
-                "no captured image for this frame",
+                "No captured image for this frame",
             ),
             Err(error) => reply(request, 422, "text/plain", error.to_string()),
         };
@@ -529,44 +532,4 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
         Ok((status, mime, body)) => reply(request, status, &mime, body),
         Err(error) => reply(request, 422, "text/plain", error.to_string()),
     }
-}
-
-fn preview(path: &Path, cache: &Path) -> io::Result<Option<PathBuf>> {
-    let Some(media) = export::media(path, cache)? else {
-        return Ok(None);
-    };
-    let out = media.path.parent().unwrap().join("preview.mp4");
-    if !out.exists() {
-        let mut command = Command::new("ffmpeg");
-        command.args(["-hide_banner", "-loglevel", "error", "-n", "-threads", "2"]);
-        if media.path.extension().is_some_and(|e| e == "h264") {
-            command.args(["-r", &media.fps.to_string()]);
-        }
-        let result = command
-            .arg("-i")
-            .arg(&media.path)
-            .args([
-                "-vf",
-                "scale=min(1280\\,iw):-2,format=yuv420p",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "18",
-                "-threads",
-                "2",
-                "-movflags",
-                "+faststart",
-            ])
-            .arg(&out)
-            .stdin(Stdio::null())
-            .output()?;
-        if !result.status.success() {
-            return Err(io::Error::other(
-                String::from_utf8_lossy(&result.stderr).into_owned(),
-            ));
-        }
-    }
-    Ok(Some(out))
 }

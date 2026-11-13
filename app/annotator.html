@@ -8,7 +8,7 @@
 html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.4 system-ui, sans-serif; overflow:hidden; }
 #stage { position:absolute; inset:0 0 150px 0; background:#000; }
 #frame { position:absolute; }
-#frame video, #frame img, #frame canvas { position:absolute; inset:0; width:100%; height:100%; }
+#frame video, #frame canvas { position:absolute; inset:0; width:100%; height:100%; }
 #label { position:absolute; display:none; background:#000c; color:#fff; border:1px solid var(--accent); font:inherit; padding:2px 4px; resize:none; z-index:3; }
 #toolbar { position:absolute; display:flex; flex-direction:column; gap:4px; width:52px; padding:4px; background:#1b1e24e6; border:1px solid var(--line); border-radius:6px; z-index:2; }
 #toolbar button { width:42px; height:32px; padding:0; font-size:11px; }
@@ -18,16 +18,16 @@ button { background:#262b33; color:var(--fg); border:1px solid var(--line); bord
 button.on { background:var(--accent); border-color:var(--accent); color:#000; }
 #scrob { position:absolute; left:0; right:0; bottom:0; height:150px; background:var(--panel); border-top:1px solid var(--line); }
 #transport { height:28px; display:flex; gap:4px; align-items:center; padding:3px 8px; }
-#transport button { width:44px; height:26px; padding:0; }
+#transport button { width:44px; height:26px; padding:0; flex-shrink:0; white-space:nowrap; }
 #transport span { margin-left:8px; } #status { color:var(--dim); margin-left:auto !important; }
 #track { display:block; width:100%; height:122px; }
 button:hover { background:#39404c; } button:focus-visible, input:focus-visible, textarea:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
 ::selection { background:var(--accent);color:#101216; } input,textarea { accent-color:var(--accent);caret-color:var(--accent); }
-#status { max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; } #clock { font-variant-numeric:tabular-nums; }
+#status { min-width:0;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; } #clock { font-variant-numeric:tabular-nums;white-space:nowrap;flex-shrink:0; }
 @media(max-width:650px) { #transport { flex-wrap:wrap;height:58px; } #track {height:92px;} #status {max-width:95%;font-size:11px;} }
 </style>
 <div id="stage">
-  <div id="frame"><video id="v" muted preload="none"></video><img id="still" alt="Original recorded frame"><span id="coverage" style="position:absolute;top:8px;right:12px;background:#101216dd;padding:4px 8px"></span><canvas id="ink" aria-label="Annotation canvas"></canvas><textarea id="label" rows="1" aria-label="Annotation text"></textarea></div>
+  <div id="frame"><video id="v" muted playsinline preload="auto"></video><span id="coverage" style="position:absolute;top:8px;right:12px;background:#101216dd;padding:4px 8px"></span><canvas id="ink" aria-label="Annotation canvas"></canvas><textarea id="label" rows="1" aria-label="Annotation text"></textarea></div>
   <div id="toolbar"></div>
 </div>
 <div id="scrob">
@@ -40,18 +40,16 @@ button:hover { background:#39404c; } button:focus-visible, input:focus-visible, 
 </div>
 <script>const TAKE = __DATA__; const MARKS = __MARKS__;</script>
 <script>
-// Source frames own the timeline; encoded picture identity is explicit, including omissions.
+// Video owns playback; source frame identities anchor annotations and channel events.
 const $ = (id) => document.getElementById(id);
 const v = $('v'), ink = $('ink'), track = $('track'), label = $('label');
-const FPS = TAKE.fps, N = TAKE.frames, TOLERANCE = 0.015;
+const N = TAKE.frames, TOLERANCE = 0.015;
 const HOST = parent.frametapeHost;
-const still = $('still');
 let revision = TAKE.revision, saving = false, savedDoc = JSON.stringify(MARKS);
 const DEFAULT_COLOUR = [255, 72, 72], DEFAULT_WIDTH = 0.0035, DEFAULT_TEXT_SIZE = 0.035;
 const TOOLS = [['select', 'Move', 'Select and move'], ['rectangle', 'Box', 'Box'], ['ellipse', 'Oval', 'Ellipse'], ['brush', 'Pen', 'Soft brush'], ['arrow', 'Arrow', 'Arrow'], ['text', 'Text', 'Text'], ['erase', 'Erase', 'Erase']];
 let doc = MARKS || { version: 2, containers: [] };
-let preview=null,videoLoading=false,videoVersion=0;
-let cur = 0, playing = false, playStart = 0, sel = -1, tool = 'rectangle', colour = DEFAULT_COLOUR, width = DEFAULT_WIDTH;
+let cur = 0, positionNs = 0, playing = false, sel = -1, tool = 'rectangle', colour = DEFAULT_COLOUR, width = DEFAULT_WIDTH;
 let drag = null, moving = null, editing = null, undo = [], redo = [], handle = null, dirty = false;
 try { const s = JSON.parse(localStorage.getItem('tools') || '{}'); tool = s.tool || tool; colour = s.colour || colour; width = s.width || width; } catch (e) {}
 
@@ -71,7 +69,7 @@ function step(from, to) { if (!from.length) return; to.push(JSON.stringify(doc))
 
 // Layout: the frame letterboxed in the stage at the video's aspect, the toolbar at its top left.
 function layout() {
-  const stage = $('stage').getBoundingClientRect(), aspect = still.naturalWidth && still.naturalHeight ? still.naturalWidth / still.naturalHeight : v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9;
+  const stage = $('stage').getBoundingClientRect(), aspect = v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9;
   const available = Math.max(1, stage.width - 64);
   let w = available, h = w / aspect;
   if (h > stage.height) { h = stage.height; w = h * aspect; }
@@ -83,69 +81,35 @@ function layout() {
   draw();
 }
 
+let player, publishedFrame=-1;
 function seek(f) {
-  if (!N) { $('coverage').textContent = 'This recording contains channel events without video frames'; return; }
-  cur = Math.max(0, Math.min(N - 1, Math.round(f)));
-  const image = TAKE.timeline[cur]?.video_frame;
-  v.style.visibility = 'hidden';
-  if (v.readyState && image != null) v.currentTime = (image - (preview?.first||0) + 0.1) / FPS;
-  still.style.visibility = 'hidden';
-  $('coverage').textContent = image == null ? 'No captured image for this frame' : 'Loading original frame…';
-  if (image != null) {
-    const index = cur, next = new Image();
-    next.onload = () => { if (cur === index && !playing) { still.src = next.src; still.style.visibility = 'visible'; $('coverage').textContent = 'Original frame'; layout(); } };
-    next.onerror = () => { if (cur === index) $('coverage').textContent = 'Image unavailable · source remains in recording'; };
-    HOST.frame(TAKE.id,cur).then(url=>{if(url&&cur===index)next.src=url;else if(!url)$('coverage').textContent='No captured image for this frame'}).catch(error=>{$('status').textContent=error.message});
-  }
-  parent.postMessage({ type: 'frame', id: TAKE.id, frame: cur }, '*');
-  draw();
-}
-async function prepareVideo(picture) {
-  const version=++videoVersion;videoLoading=true;v.style.visibility='hidden';
-  $('coverage').textContent='Preparing motion preview…';
-  try {
-    const segment=await HOST.video(TAKE.id,picture);
-    if(version!==videoVersion||!playing)return;
-    preview=segment;
-    await new Promise((resolve,reject)=>{v.onloadeddata=resolve;v.onerror=()=>reject(Error('Motion preview cannot be played by this browser'));v.src=segment.url;v.load()});
-    if(version!==videoVersion||!playing)return;
-    v.currentTime=(picture-segment.first+.1)/FPS;v.style.visibility='visible';
-    playStart=performance.now()-TAKE.timeline[cur].timestamp_ns/1e6;
-  }catch(error){if(version===videoVersion){setPlaying(false);$('status').textContent=error.message}}
-  finally{if(version===videoVersion)videoLoading=false}
-}
-function setPlaying(on) {
   if (!N) return;
-  playing = on;
-  $('play').textContent = on ? 'Pause' : 'Play';
-  if (on) {
-    playStart = performance.now() - TAKE.timeline[cur].timestamp_ns / 1e6;
-    still.style.visibility = 'hidden';
-    const picture=TAKE.timeline[cur].video_frame;
-    v.style.visibility=picture==null?'hidden':'visible';
-    if(picture!=null&&(!preview||picture<preview.first||picture>preview.last))prepareVideo(picture);
-  } else { ++videoVersion;videoLoading=false;v.pause();seek(cur); }
+  player.seekSource(f);
 }
-const follow = () => {
-  if (playing && !videoLoading) {
-    const elapsed = (performance.now() - playStart) * 1e6;
-    const found = TAKE.timeline.findLastIndex((f) => f.timestamp_ns <= elapsed);
-    if (found >= 0 && found !== cur) {
-      cur = found;
-      const image = TAKE.timeline[cur].video_frame;
-      v.style.visibility = image == null ? 'hidden' : 'visible';
-      if(image!=null&&(!preview||image<preview.first||image>preview.last))prepareVideo(image);
-      else if (v.readyState && image != null) v.currentTime = (image - (preview?.first||0) + 0.1) / FPS;
-      $('coverage').textContent = image == null ? 'No captured image for this frame' : 'Motion preview · pause for original pixels';
-      parent.postMessage({type:'frame',id:TAKE.id,frame:cur},'*');
-    }
-    const last = TAKE.timeline[N - 1];
-    if (elapsed >= last.timestamp_ns + last.duration_ns) setPlaying(false);
-    draw();
+function setPlaying(on) { if(on)player.play();else player.pause(); }
+player = N ? new parent.FrametapeVideoPlayer({
+  video:v, frames:TAKE.timeline,
+  open:compatible=>HOST.video(TAKE.id,compatible),
+  onPosition:({index,missing,picture,uncovered,sourceTimeNs})=>{
+    const changed=index!==cur||publishedFrame!==index;cur=index;positionNs=sourceTimeNs;
+    updateClock();
+    v.style.visibility=uncovered?'hidden':'visible';
+    $('coverage').textContent=uncovered?'No captured picture at this position':missing?'No captured picture at this position · holding recorded picture '+picture:'';
+    if(publishedFrame!==cur){publishedFrame=cur;parent.postMessage({type:'frame',id:TAKE.id,frame:cur},'*')}
+    if(changed)draw();
+  },
+  onState:state=>{
+    playing=state.playing;$('play').textContent=playing?'Pause':'Play';
+    ink.style.pointerEvents=state.seeking||state.loading?'none':'';
+    ink.style.visibility=state.seeking||state.loading?'hidden':'visible';
+    if(state.message)$('coverage').textContent=state.message;
+    else if(state.seeking)$('coverage').textContent='Seeking…';
+    else if(!TAKE.timeline[cur]?.video_frame&&TAKE.timeline[cur]?.video_frame!==0)$('coverage').textContent='No captured picture at this position';
+    else $('coverage').textContent='';
+    layout();
   }
-  requestAnimationFrame(follow);
-};
-requestAnimationFrame(follow);
+}) : null;
+addEventListener('pagehide',()=>player?.dispose());
 
 // Marks.
 function points(m) { return m.mark === 'stroke' ? m.points : m.mark === 'arrow' ? [m.from, m.to] : m.mark === 'text' ? [m.at] : [m.a, m.b]; }
@@ -215,13 +179,17 @@ function draft() {
   return { mark: tool, a: drag.start, b: drag.at, colour, width };
 }
 
+function updateClock() {
+  const text=N?`Frame ${cur} / ${N-1} · ${(positionNs/1e9).toFixed(3)} s`:'No recorded frames';
+  if($('clock').textContent!==text)$('clock').textContent=text;
+}
 function draw() {
   reportDirty();
   const c = ink.getContext('2d'), W = ink.width, H = ink.height;
   c.clearRect(0, 0, W, H);
   doc.containers.forEach((k, i) => covers(k, cur) && k.marks.forEach((m) => paint(c, m, W, H, i === sel)));
   const d = draft(); if (d) paint(c, d, W, H, false);
-  $('clock').textContent = N ? `Frame ${cur} / ${N - 1} · ${((TAKE.timeline[cur]?.timestamp_ns || 0) / 1e9).toFixed(3)} s` : 'No recorded frames';
+  updateClock();
   [...$('toolbar').querySelectorAll('button')].forEach((b) => { b.classList.toggle('on', b.dataset.t === tool); b.setAttribute('aria-pressed', String(b.dataset.t === tool)); });
   ink.style.cursor = tool === 'select' ? 'default' : tool === 'text' ? 'text' : 'crosshair';
   drawTrack();
@@ -375,7 +343,7 @@ $('save').onclick=HOST.saveMode==='draft'?exportCopy:save;
 $('copy').onclick=exportCopy;
 addEventListener('message',event=>{if(event.source===parent&&event.data?.type==='export')exportCopy()});
 $('first').onclick = () => seek(0); $('last').onclick = () => seek(N - 1);
-$('back').onclick = () => { setPlaying(false); seek(cur - 1); }; $('fwd').onclick = () => { setPlaying(false); seek(cur + 1); };
+$('back').onclick = () => player?.step(-1); $('fwd').onclick = () => player?.step(1);
 $('play').onclick = () => setPlaying(!playing);
 addEventListener('keydown', (e) => {
   if (editing || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
@@ -384,18 +352,16 @@ addEventListener('keydown', (e) => {
   else if (e.ctrlKey && k === 'y') { step(redo, undo); e.preventDefault(); }
   else if (e.ctrlKey && k === 's') { HOST.saveMode==='draft'?exportCopy():save(); e.preventDefault(); }
   else if (k === ' ') { setPlaying(!playing); e.preventDefault(); }
-  else if (k === 'ArrowLeft' || k === 'ArrowRight') { setPlaying(false); seek(cur + (k === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 10 : 1)); e.preventDefault(); }
+  else if (k === 'ArrowLeft' || k === 'ArrowRight') { player?.step((k === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 10 : 1)); e.preventDefault(); }
   else if (k === 'Home') seek(0); else if (k === 'End') seek(N - 1);
   else if ((k === 'Delete' || k === 'Backspace') && sel >= 0) { snapshot(); doc.containers.splice(sel, 1); sel = -1; changed(); }
 });
 addEventListener('beforeunload', (e) => { if (dirty||editing||drag||moving) e.preventDefault(); });
 addEventListener('message',e=>{if(e.source===parent&&e.data?.type==='discard'){dirty=false;editing=drag=moving=null}});
 label.addEventListener('input',reportDirty);
-v.addEventListener('loadedmetadata', () => { layout(); if(!playing)seek(cur); });
-v.addEventListener('seeked', draw);
-v.addEventListener('error', () => { $('status').textContent = 'Motion preview unavailable; step to inspect original frames'; });
+v.addEventListener('loadedmetadata', layout);
 addEventListener('resize', layout);
 $('status').textContent = HOST.saveMode==='draft'?'Local browser review · original file unchanged':'Annotations saved in recording';
 if (!N) { document.querySelectorAll('#toolbar button,#transport button').forEach((b) => b.disabled = true); ink.style.pointerEvents = 'none'; parent.postMessage({type:'frame',id:TAKE.id,frame:null},'*'); }
-layout(); seek(0);
+layout(); if(!N)$('coverage').textContent='This recording contains channel events without video';
 </script>

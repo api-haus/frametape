@@ -111,8 +111,7 @@ and the [C header](include/frametape.h) cover other hosts.
 
 ## Standalone annotation and playback
 
-`frametape-app` opens a native window with a folder catalog, original-frame review, source-clock
-playback, synchronized events and annotation tools. It accepts a `.ftape` path or folder; with no
+`frametape-app` opens a native window with a folder catalog, continuous video playback, frame stepping, synchronized events and annotation tools. It accepts a `.ftape` path or folder; with no
 argument it opens Videos/Frametape. Linux desktop packaging registers `.ftape` with this app.
 
 `frametape app [FILE-OR-FOLDER]` prefers the installed native app. `--browser` retains the local
@@ -120,7 +119,7 @@ Rust-backed browser UI; `--no-open` serves it without launching a window.
 
 The entirely browser-local version is [web/app/frametape.html](web/app/frametape.html): download
 and open the single HTML file, then select local recordings/folders. It requires no recording
-server and uploads no files. Original frame decoding and motion preview run on this device.
+server and uploads no files. Video indexing and playback run on this device.
 The separately licensed FFmpeg codec program is fetched from a pinned, integrity-checked upstream
 URL on first use and cached; the app/model itself is embedded. Browser drafts persist in IndexedDB
 with generation checks. Export produces a new `.ftape` copy and preserves original channels and
@@ -145,8 +144,12 @@ JavaScript dependencies build through nodebox. Third-party browser notices ship 
 
 The local app catalogs a folder with previews, search and sorting. Open a take, step or
 scrub source frames, draw boxes/ellipses/arrows/brush strokes/text, move or erase marks,
-edit inclusive ranges, undo/redo and save. Paused views decode original pixels;
-playback uses a labeled compatible preview paced by the source clock. Annotations live
+edit inclusive ranges, undo/redo and save. Playback and paused review use the same video decoder;
+frame stepping seeks indexed presentation timestamps. Raw H.264 is remuxed once against the
+recorded source clock without re-encoding. Unsupported codecs get a full-resolution compatible
+video once; source attachments remain intact. Previous/Next move between recorded video pictures;
+timeline selection retains source frame identities for annotations. Still extraction serves thumbnails and explicit
+image exports, never the player transport. Native preparation requires FFmpeg 6.1 or later. Annotations live
 inside the take. Concurrent editor changes are rejected rather than overwritten.
 
 ```bash
