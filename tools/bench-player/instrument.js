@@ -19,7 +19,7 @@ if(window!==parent){
   track.addEventListener('pointerdown',event=>{const n=Number(clock.textContent.match(/\/ (\d+)/)?.[1]??0);begin(Math.round((event.offsetX-10)/(track.clientWidth-20)*n),'scrub')},true);
   v.addEventListener('seeked',()=>{if(request)request.seeked_ms=performance.now()-request.began});
   const tick=()=>{
-   if(!ready&&v.readyState>=2&&!v.seeking&&Number.isFinite(v.duration)){ready=true;send({type:'ready',dpr:devicePixelRatio,width:v.videoWidth,height:v.videoHeight,duration:v.duration,controls:Object.fromEntries(['first','fwd','back','last'].map(id=>[id,rect(document.getElementById(id))])),track:rect(track)})}
+   if(!ready&&v.readyState>=2&&!v.seeking&&!player.pendingSeek&&!player.loading&&Number.isFinite(v.duration)){ready=true;send({type:'ready',dpr:devicePixelRatio,width:v.videoWidth,height:v.videoHeight,duration:v.duration,controls:Object.fromEntries(['first','fwd','back','last'].map(id=>[id,rect(document.getElementById(id))])),track:rect(track)})}
    const background=player?.prefetch?.video;if(background&&background!==observed){observed=background;for(const name of ['seeking','seeked','error'])background.addEventListener(name,()=>send({type:'decoder',event:name,time:background.currentTime,seeking:background.seeking,ready:background.readyState,duration:background.duration,seekable:Array.from({length:background.seekable.length},(_,i)=>[background.seekable.start(i),background.seekable.end(i)]),center:player.prefetch.center}))}
    const r=request,cache=document.querySelector('#decoded-frame');
    if(r&&!r.stalled&&performance.now()-r.began>5000){r.stalled=true;send({type:'stalled',id:r.id,expected:r.expected,frame:frame(),time:v.currentTime,seeking:v.seeking,readyState:v.readyState})}

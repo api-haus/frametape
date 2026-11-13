@@ -34,8 +34,8 @@ export class DecodedFrames {
     const picture=neighbors.find(i=>!this.entries.has(i));if(picture==null)break;
     if(!this.video){const v=this.document.createElement('video');v.muted=true;v.playsInline=true;v.preload='auto';this.video=v;v.src=this.media.url;v.load()}
     const v=this.video;this.decode=new AbortController();
-    const end=times[picture+1]??this.media.duration,at=times[picture]+Math.min(.0005,(end-times[picture])/4);
-    await seekVideo(v,at,{signal:this.decode.signal});
+    const end=times[picture+1]??times[0]+this.media.duration,at=times[picture]+Math.min(.0005,(end-times[picture])/4);
+    await seekVideo(v,at,{signal:this.decode.signal,from:times[picture],to:Math.min(end,at+Math.min(.0005,(end-times[picture])/4))});
     if(worker!==this.worker)return;
     if(generation!==this.generation)continue;
     if(v.currentTime<times[picture]-1e-7||v.currentTime>=(times[picture+1]??Infinity))throw Error('Background decoder reached a different picture');
