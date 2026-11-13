@@ -6,3 +6,6 @@ No recordings, private project code, credentials or machine-specific paths in pu
 Run `processqueue cpu cargo test --workspace` and review the diff before committing.
 Use independent capture/channel producers; core bundle/annotation crate has no engine dependency.
 Scratch: `.agents/scratch/` (excluded via `.git/info/exclude`). Builds: `target/` (same).
+Native playback checks must verify drawable pixels, not only clocks/events. WebKit can report
+readiness while a detached video decoder yields transparent canvas snapshots; attach auxiliary
+decoders to the document. Serialize native seeks: canceling a JS wait does not cancel GStreamer's seek.
