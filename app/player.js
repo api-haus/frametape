@@ -57,7 +57,7 @@ export class VideoPlayer {
   if(this.disposed||this.loading)return;
   if(this.compatible){this.state('Video cannot be decoded by this player');return}
   const playing=!this.video.paused,intent=this.intent;
-  try{this.video.pause();this.ready=this.load(true);await this.ready;if(this.seekReady&&!await this.seekReady)return;if(playing&&intent===this.intent&&!this.disposed)await this.video.play()}catch(error){this.state(error.message)}
+  try{this.video.pause();this.ready=this.load(true);await this.ready;if(this.seekReady&&!await this.seekReady)return;if(playing&&intent===this.intent&&!this.disposed)await this.play()}catch(error){this.state(error.message)}
  }
  pictureAt(time){
   const a=this.media?.times;if(!a?.length)return 0;

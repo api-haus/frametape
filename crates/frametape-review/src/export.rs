@@ -38,6 +38,8 @@ pub fn image(path: &Path, frame: u64, cache: &Path) -> io::Result<Option<PathBuf
         .unwrap()
         .join(format!("frame-{index}.png"));
     if !output.exists() {
+        // Concurrent workers may want the same picture; only a finished file takes the served name.
+        let partial = output.with_extension(format!("{:?}.partial", std::thread::current().id()));
         let result = Command::new("ffmpeg")
             .args(["-hide_banner", "-loglevel", "error", "-n", "-threads", "2"])
             .arg("-i")
@@ -52,14 +54,17 @@ pub fn image(path: &Path, frame: u64, cache: &Path) -> io::Result<Option<PathBuf
                 "-threads",
                 "1",
             ])
-            .arg(&output)
+            .args(["-f", "image2", "-c:v", "png"])
+            .arg(&partial)
             .stdin(Stdio::null())
             .output()?;
         if !result.status.success() {
+            let _ = fs::remove_file(&partial);
             return Err(io::Error::other(
                 String::from_utf8_lossy(&result.stderr).into_owned(),
             ));
         }
+        fs::rename(&partial, &output)?;
         if !output.is_file() {
             return Err(io::Error::other("video ends before mapped picture"));
         }

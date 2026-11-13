@@ -8,7 +8,7 @@ export class DecodedFrames {
  reset(media){this.dispose();this.failed=false;this.media=media}
  get(picture){return this.entries.get(picture)}
  release(image){if(image.close)image.close();else image.width=image.height=0}
- limit(){if(!this.width)return 0;return Math.max(1,Math.min(this.samples?64:7,Math.floor(this.budget/(this.width*this.height*4))))}
+ limit(){return this.width?Math.min(this.samples?64:7,Math.floor(this.budget/(this.width*this.height*4))):0}
  store(picture,image,center){
   const cost=image.width*image.height*4;
   if(!cost||cost>this.budget||this.entries.has(picture)){this.release(image);return false}

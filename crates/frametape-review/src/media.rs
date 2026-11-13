@@ -168,8 +168,8 @@ pub fn playback(path: &Path, cache: &Path, compatible: bool) -> io::Result<Optio
     static RESOLVED: Mutex<Vec<(String, PathBuf, bool, Option<Arc<Playback>>)>> =
         Mutex::new(Vec::new());
     let revision = crate::export::cache_key(path)?;
-    let mut resolved = RESOLVED.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((.., hit)) = resolved
+    let resolved = || RESOLVED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((.., hit)) = resolved()
         .iter()
         .find(|(r, c, m, _)| *r == revision && c == cache && *m == compatible)
     {
@@ -177,7 +177,9 @@ pub fn playback(path: &Path, cache: &Path, compatible: bool) -> io::Result<Optio
             return Ok(hit.clone());
         }
     }
+    // Unlocked: a transcode of one recording must not stall requests for another.
     let playback = prepare(path, cache, compatible)?.map(Arc::new);
+    let mut resolved = resolved();
     resolved.retain(|(r, c, m, _)| !(*r == revision && c == cache && *m == compatible));
     if resolved.len() >= 64 {
         resolved.remove(0);
