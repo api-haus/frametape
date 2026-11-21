@@ -1,8 +1,10 @@
-use crate::export;
+use crate::{
+    catalog::{self, Recordings},
+    export,
+};
 use frametape::{Annotations, TapeReader};
 use serde_json::{Value, json};
 use std::fs::{self, File};
-use std::hash::{Hash, Hasher};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -12,24 +14,6 @@ use std::sync::{
 };
 use std::thread::JoinHandle;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
-
-fn id(path: &Path) -> String {
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    path.hash(&mut hash);
-    format!("{:016x}", hash.finish())
-}
-
-fn recordings(root: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut paths = Vec::new();
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        if entry.file_type()?.is_file() && entry.path().extension().is_some_and(|e| e == "ftape") {
-            paths.push(entry.path());
-        }
-    }
-    paths.sort();
-    Ok(paths)
-}
 
 fn revision(path: &Path) -> io::Result<String> {
     export::cache_key(path)
@@ -108,7 +92,7 @@ fn file_reply(request: Request, path: &Path, mime: &str) -> io::Result<()> {
 
 #[derive(Clone)]
 struct Library {
-    root: PathBuf,
+    recordings: Arc<Recordings>,
     cache: PathBuf,
 }
 
@@ -123,19 +107,15 @@ pub struct AppServer {
     workers: Vec<JoinHandle<()>>,
 }
 
-fn library(path: &Path) -> io::Result<(Library, Option<String>)> {
-    let path = fs::canonicalize(path)?;
-    let selected = path.is_file().then(|| id(&path));
-    let root = if path.is_dir() {
-        path
-    } else {
-        path.parent().unwrap().to_owned()
-    };
+fn library(path: &Path) -> io::Result<Library> {
+    let recordings = Arc::new(Recordings::open(path)?);
     let cache_home = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
         .ok_or_else(|| io::Error::other("cache directory unavailable"))?;
-    let cache = cache_home.join("frametape").join(id(&root));
+    let cache = cache_home
+        .join("frametape")
+        .join(catalog::id(&recordings.root));
     fs::create_dir_all(&cache)?;
     #[cfg(unix)]
     {
@@ -145,12 +125,20 @@ fn library(path: &Path) -> io::Result<(Library, Option<String>)> {
             fs::Permissions::from_mode(0o700),
         )?;
     }
-    Ok((Library { root, cache }, selected))
+    Ok(Library { recordings, cache })
+}
+
+fn selection_query(library: &Library) -> String {
+    library
+        .recordings
+        .selected
+        .as_ref()
+        .map_or_else(String::new, |(id, _)| format!("?take={id}"))
 }
 
 impl AppServer {
     pub fn start(path: PathBuf, port: u16) -> io::Result<Self> {
-        let (initial, selected) = library(&path)?;
+        let initial = library(&path)?;
         let server = Arc::new(Server::http(("127.0.0.1", port)).map_err(io::Error::other)?);
         let address = server
             .server_addr()
@@ -164,10 +152,7 @@ impl AppServer {
             .map(|n| format!("{n:02x}"))
             .collect::<String>();
         let prefix = format!("/{token}/");
-        let url = format!(
-            "{origin}{prefix}{}",
-            selected.map_or(String::new(), |id| format!("?take={id}"))
-        );
+        let url = format!("{origin}{prefix}{}", selection_query(&initial));
         let shared = Arc::new(RwLock::new(initial));
         let stop = Arc::new(AtomicBool::new(false));
         let (listener, state, stopping, allowed_origin, route_prefix) = (
@@ -222,7 +207,7 @@ impl AppServer {
                                 .read()
                                 .map_err(|_| io::Error::other("library state poisoned"))?
                                 .clone();
-                            handle(request, &route, &library.root, &library.cache)
+                            handle(request, &route, &library)
                         })();
                         if let Err(error) = accepted {
                             eprintln!("app request: {error}");
@@ -242,17 +227,13 @@ impl AppServer {
         })
     }
     pub fn open(&self, path: &Path) -> io::Result<String> {
-        let (next, selected) = library(path)?;
+        let next = library(path)?;
+        let url = self.origin.clone() + &self.prefix + &selection_query(&next);
         *self
             .library
             .write()
             .map_err(|_| io::Error::other("library state poisoned"))? = next;
-        Ok(format!(
-            "{}{}{}",
-            self.origin,
-            self.prefix,
-            selected.map_or(String::new(), |id| format!("?take={id}"))
-        ))
+        Ok(url)
     }
 }
 impl Drop for AppServer {
@@ -296,7 +277,7 @@ pub fn serve(path: PathBuf, port: u16, no_open: bool) -> io::Result<()> {
     Ok(())
 }
 
-fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::Result<()> {
+fn handle(mut request: Request, route: &str, library: &Library) -> io::Result<()> {
     if request.method() != &Method::Get && request.method() != &Method::Post {
         return reply(request, 405, "text/plain", "method not allowed");
     }
@@ -311,6 +292,7 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
     let asset = match route {
         "entry.js" => Some(include_str!("../../../app/entry.js")),
         "catalog.js" => Some(include_str!("../../../app/catalog.js")),
+        "library.js" => Some(include_str!("../../../app/library.js")),
         "host.js" => Some(include_str!("../../../app/host.js")),
         "player.js" => Some(include_str!("../../../app/player.js")),
         "decoded-frames.js" => Some(include_str!("../../../app/decoded-frames.js")),
@@ -322,50 +304,31 @@ fn handle(mut request: Request, route: &str, root: &Path, cache: &Path) -> io::R
         return reply(request, 200, "text/javascript", asset);
     }
     if route == "catalog" {
-        let mut rows = Vec::new();
-        for path in recordings(root)? {
-            let mut entry = json!({"id":id(&path),"name":path.file_name().unwrap().to_string_lossy(),"bytes":0,"modified_ms":0});
-            let inspected = (|| -> io::Result<()> {
-                let stat = fs::metadata(&path)?;
-                entry["bytes"] = json!(stat.len());
-                entry["modified_ms"] = json!(
-                    stat.modified()?
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_err(io::Error::other)?
-                        .as_millis()
-                );
-                let mut tape = TapeReader::open(&path)?;
-                let annotations = tape.annotations()?;
-                entry["manifest"] =
-                    serde_json::to_value(&tape.manifest).map_err(io::Error::other)?;
-                entry["labels"] = json!(
-                    annotations
-                        .containers
-                        .iter()
-                        .flat_map(|c| c.labels())
-                        .collect::<Vec<_>>()
-                );
-                Ok(())
-            })();
-            if let Err(error) = inspected {
-                entry["error"] = json!(error.to_string());
-            }
-            rows.push(entry);
-        }
-        return json_reply(request, &json!(rows));
+        return match library.recordings.index() {
+            Ok(rows) => json_reply(request, &json!(rows)),
+            Err(error) => reply(request, 422, "text/plain", error.to_string()),
+        };
     }
     let parts = route.split('/').collect::<Vec<_>>();
     if parts.len() < 2 {
         return reply(request, 404, "text/plain", "unknown route");
     }
-    let Some(path) = recordings(root)?.into_iter().find(|p| id(p) == parts[1]) else {
-        return reply(
-            request,
-            404,
-            "text/plain",
-            "recording not found; refresh catalog",
-        );
+    let path = match library.recordings.resolve(parts[1]) {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            return reply(
+                request,
+                404,
+                "text/plain",
+                "recording not found; refresh catalog",
+            );
+        }
+        Err(error) => return reply(request, 422, "text/plain", error.to_string()),
     };
+    if parts[0] == "record" {
+        return json_reply(request, &catalog::detail(parts[1], &path));
+    }
+    let cache = &library.cache;
     if parts[0] == "download" {
         return request.respond(
             Response::from_file(File::open(&path)?)

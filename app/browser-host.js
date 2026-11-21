@@ -71,6 +71,7 @@ export class BrowserReviewHost {
   this.changed();
  }
  async list(){return [...this.rows.values()]}
+ async record(id){return this.row(id)}
  row(id){const row=this.rows.get(id);if(!row||row.error)throw Error(row?.error||'Recording no longer available');return row}
  async reviewHTML(id){
   const row=this.row(id),{manifest,frames,annotations}=row.info;
