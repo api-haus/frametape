@@ -60,6 +60,12 @@ enum Command {
     Sync,
     /// Download an authenticated portal link for local inspection or frame export.
     Fetch { link: String, output: PathBuf },
+    /// Read a portal recording's manifest, annotations or selected frame events.
+    InspectLink {
+        link: String,
+        #[arg(long)]
+        frame: Option<u64>,
+    },
     /// Print manifest, channel data or annotations as JSON.
     Inspect {
         path: PathBuf,
@@ -125,10 +131,15 @@ fn run(cli: Cli) -> io::Result<()> {
             Ok(())
         }
         Command::Fetch { link, output } => {
-            let id = link
-                .strip_prefix("https://tape.api.haus/?take=")
-                .ok_or_else(|| io::Error::other("expected a tape.api.haus recording link"))?;
+            let id = frametape::transfer::link_id(&link)?;
             frametape::transfer::Client::owner()?.fetch(id, &output)
+        }
+        Command::InspectLink { link, frame } => {
+            let id = frametape::transfer::link_id(&link)?;
+            let reply = frametape::transfer::Client::owner()?.inspect(id, frame)?;
+            let value: serde_json::Value = serde_json::from_slice(&reply)?;
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            Ok(())
         }
         #[cfg(target_os = "linux")]
         Command::Record(options) => record::record(options),

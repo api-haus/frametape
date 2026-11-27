@@ -59,6 +59,12 @@ pub fn valid_member(name: &str) -> bool {
             .all(|part| !matches!(part, "" | "." | "..") && !part.contains(['\\', ':', '\0']))
 }
 
+pub fn link_id(url: &str) -> io::Result<&str> {
+    url.strip_prefix("https://tape.api.haus/?take=")
+        .filter(|id| valid_id(id))
+        .ok_or_else(|| io::Error::other("expected a tape.api.haus recording link"))
+}
+
 pub fn link(id: &str) -> String {
     format!("https://{HOST}/?take={id}")
 }
@@ -200,6 +206,17 @@ impl Client {
         }
         written?;
         Ok(reply.stdout)
+    }
+
+    pub fn inspect(&self, id: &str, frame: Option<u64>) -> io::Result<Vec<u8>> {
+        if !valid_id(id) {
+            return Err(io::Error::other("invalid portal recording ID"));
+        }
+        let path = frame.map_or_else(
+            || format!("summary/{id}"),
+            |frame| format!("events/{id}/{frame}"),
+        );
+        self.request("GET", &path, &[], None)
     }
 
     pub fn fetch(&self, id: &str, output: &Path) -> io::Result<()> {

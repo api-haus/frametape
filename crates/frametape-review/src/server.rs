@@ -401,6 +401,13 @@ pub(crate) fn handle(mut request: Request, route: &str, library: &Library) -> io
     let result = (|| -> io::Result<(u16, String, Vec<u8>)> {
         let mut tape = TapeReader::open(&path)?;
         match parts[0] {
+            "summary" => Ok((
+                200,
+                "application/json".into(),
+                serde_json::to_vec(&json!({
+                    "manifest":tape.manifest, "annotations":tape.annotations()?
+                }))?,
+            )),
             "take" => {
                 let frames = tape.frames()?;
                 Ok((200,"application/json".into(),serde_json::to_vec(&json!({"manifest":tape.manifest,"frames":frames,"annotations":tape.annotations()?,"revision":revision(&path)?})).map_err(io::Error::other)?))

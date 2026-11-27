@@ -29,6 +29,7 @@ SERVICE
 cat > "$units/frametape-sync.service" <<'SERVICE'
 [Unit]
 Description=Retry pending Frametape uploads
+ConditionPathExists=%t/frametape/portal.sock
 
 [Service]
 Type=oneshot

@@ -464,12 +464,7 @@ pub fn record(options: Options) -> io::Result<()> {
             }
         })
     } else {
-        let title = if frametape::transfer::Client::configured().is_ok_and(|c| c.is_some()) {
-            "REC · streaming"
-        } else {
-            "Recording window"
-        };
-        notify(title, description);
+        notify("Recording window", description);
         let output = options.capture.output.clone();
         let capture_target = match &target {
             Some(window) => CaptureTarget::Window(window.handle()?),

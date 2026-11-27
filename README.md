@@ -226,5 +226,6 @@ The video streams during capture. A link is confirmed once the portal validates 
 the complete recording.
 
 Use **Copy link** in the portal or take the link from the uploader’s confirmation. Local agents
-can run `frametape fetch 'https://tape.api.haus/?take=…' TAKE` through the owner socket, then
-`frametape inspect TAKE --annotations` and `frametape export TAKE OUTPUT --frames 42`.
+can run `frametape inspect-link 'https://tape.api.haus/?take=…'` through the owner socket to
+read the manifest and annotations immediately. Use `frametape fetch LINK TAKE` to download the
+bundle and `frametape export TAKE OUTPUT --frames 42` to export annotated images.
