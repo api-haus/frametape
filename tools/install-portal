@@ -14,11 +14,10 @@ mv -f "$destination/.frametape-portal.new" "$destination/frametape-portal"
 cat > "$units/frametape-portal.service" <<'SERVICE'
 [Unit]
 Description=Frametape LAN portal
-ConditionPathExists=%E/frametape/portal-verifiers
 
 [Service]
 Type=simple
-EnvironmentFile=%E/frametape/portal-verifiers
+EnvironmentFile=-%E/frametape/portal-verifiers
 ExecStart=%h/.local/bin/frametape-portal portal %h/Videos/Frametape/Portal
 UMask=0077
 Restart=on-failure

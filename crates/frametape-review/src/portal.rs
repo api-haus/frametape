@@ -18,9 +18,13 @@ use tiny_http::{Method, Request, Response, Server};
 
 struct Portal {
     incoming: PathBuf,
+    credentials: Option<Credentials>,
+    origins: Vec<String>,
+}
+
+struct Credentials {
     password: String,
     token: String,
-    origins: Vec<String>,
 }
 
 fn header_value<'a>(request: &'a Request, name: &'static str) -> Option<&'a str> {
@@ -53,28 +57,34 @@ fn private_dir(path: &Path) -> io::Result<()> {
 }
 
 pub fn serve(path: PathBuf, port: u16) -> io::Result<()> {
-    let password = verifier("FRAMETAPE_PORTAL_PASSWORD_SHA256")?;
-    let token = verifier("FRAMETAPE_PORTAL_TOKEN_SHA256")?;
-    if equal(&password, &token) {
-        return Err(io::Error::other(
-            "portal password and upload token must differ",
-        ));
-    }
+    const PASSWORD: &str = "FRAMETAPE_PORTAL_PASSWORD_SHA256";
+    const TOKEN: &str = "FRAMETAPE_PORTAL_TOKEN_SHA256";
+    let credentials = if std::env::var_os(PASSWORD).is_none() && std::env::var_os(TOKEN).is_none() {
+        None
+    } else {
+        let password = verifier(PASSWORD)?;
+        let token = verifier(TOKEN)?;
+        if equal(&password, &token) {
+            return Err(io::Error::other(
+                "portal password and upload token must differ",
+            ));
+        }
+        Some(Credentials { password, token })
+    };
     private_dir(&path)?;
     let state = library(&path, true)?;
     let incoming = state.recordings.root.join(".incoming");
     private_dir(&incoming)?;
     let portal = Arc::new(Portal {
         incoming,
-        password,
-        token,
+        credentials,
         origins: std::env::var("FRAMETAPE_PORTAL_WEB_ORIGINS")
             .unwrap_or_default()
             .split_whitespace()
             .map(str::to_owned)
             .collect(),
     });
-    let front = Arc::new(Server::http(("127.0.0.1", port)).map_err(io::Error::other)?);
+    let mut thread_handles = Vec::new();
     #[cfg(unix)]
     let _socket = if let Some(path) = frametape::transfer::socket_path() {
         private_dir(path.parent().unwrap())?;
@@ -90,13 +100,23 @@ pub fn serve(path: PathBuf, port: u16) -> io::Result<()> {
             Err(error) => return Err(error),
         }
         let local = Arc::new(Server::http_unix(&path).map_err(io::Error::other)?);
-        workers(local, state.clone(), portal.clone(), true);
+        thread_handles.extend(workers(local, state.clone(), portal.clone(), true));
         Some((path, lock))
     } else {
         None
     };
-    println!("Portal reverse-proxy listener {}", front.server_addr());
-    for worker in workers(front, state, portal, false) {
+    if portal.credentials.is_some() {
+        let front = Arc::new(Server::http(("127.0.0.1", port)).map_err(io::Error::other)?);
+        println!("Portal reverse-proxy listener {}", front.server_addr());
+        thread_handles.extend(workers(front, state, portal, false));
+    } else if thread_handles.is_empty() {
+        return Err(io::Error::other(
+            "portal needs an owner socket or both credential verifiers",
+        ));
+    } else {
+        println!("Portal owner socket ready");
+    }
+    for worker in thread_handles {
         worker
             .join()
             .map_err(|_| io::Error::other("portal worker failed"))?;
@@ -149,11 +169,6 @@ fn route(
     if request.method() == &Method::Options && cross.is_some() {
         return ingest_response(request, 204, "", cross);
     }
-    let auth = header_value(&request, "Authorization").unwrap_or("");
-    let bearer = ingest
-        && auth
-            .strip_prefix("Bearer ")
-            .is_some_and(|value| equal(&digest_bytes(value.as_bytes()), &portal.token));
     if origin
         .as_deref()
         .is_some_and(|value| value != "https://tape.api.haus")
@@ -161,16 +176,24 @@ fn route(
     {
         return reply(request, 403, "text/plain", "invalid origin");
     }
-    if !local && !bearer {
+    if !local {
+        let Some(credentials) = &portal.credentials else {
+            return reply(request, 503, "text/plain", "portal sign-in unavailable");
+        };
+        let auth = header_value(&request, "Authorization").unwrap_or("");
+        let bearer = ingest
+            && auth
+                .strip_prefix("Bearer ")
+                .is_some_and(|value| equal(&digest_bytes(value.as_bytes()), &credentials.token));
         let authenticated = auth
             .strip_prefix("Basic ")
             .and_then(|value| STANDARD.decode(value).ok())
             .is_some_and(|value| {
                 value
                     .strip_prefix(b"owner:")
-                    .is_some_and(|password| equal(&digest_bytes(password), &portal.password))
+                    .is_some_and(|password| equal(&digest_bytes(password), &credentials.password))
             });
-        if !authenticated {
+        if !authenticated && !bearer {
             if ingest {
                 return ingest_response(request, 401, "invalid portal credential", cross);
             }
@@ -184,7 +207,8 @@ fn route(
                     .with_header(header("Cache-Control", "no-store")),
             );
         }
-        if matches!(request.method(), &Method::Post | &Method::Put)
+        if !bearer
+            && matches!(request.method(), &Method::Post | &Method::Put)
             && origin.as_deref() != Some("https://tape.api.haus")
         {
             return reply(request, 403, "text/plain", "invalid origin");

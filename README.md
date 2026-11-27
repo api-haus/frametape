@@ -203,7 +203,7 @@ no private engine, game assets or third-party Box3D implementation is vendored.
 
 The portal uses the same catalog, video player, frame annotations and agent export as the local reviewer.
 Run `frametape portal RECORDINGS` behind a LAN-restricted HTTPS reverse proxy for
-`tape.api.haus`. The command listens on loopback. Pass SHA-256 verifiers of two independent,
+`tape.api.haus`. The command listens on loopback when browser credentials are configured. It can serve the owner socket while browser access is being set up. Pass SHA-256 verifiers of two independent,
 random credentials through `FRAMETAPE_PORTAL_PASSWORD_SHA256` and `FRAMETAPE_PORTAL_TOKEN_SHA256`.
 Sign in as `owner` with the browser password. The upload token can write takes only.
 Keep both original credentials in the owner's vault.
