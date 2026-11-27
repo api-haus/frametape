@@ -134,7 +134,7 @@
                 const labels = {
                     local: '● REC', connecting: '● REC · connecting', streaming: '● REC · streaming',
                     paused: '● REC · upload paused', finalizing: 'Uploading take…',
-                    capture_failed: 'Recording failed', failed: 'Local take saved · upload failed', confirmed: 'Take on portal',
+                    capture_failed: 'Recording failed', failed: 'Portal upload failed', confirmed: 'Take on portal',
                 };
                 element.hidden = !labels[state];
                 if (url) {
