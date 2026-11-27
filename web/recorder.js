@@ -32,7 +32,7 @@ globalThis.FrametapeVideo = { create(rec, options = {}) {
 			if (!s.encoder) {
 				s.size = width + 'x' + height; s.width = width; s.height = height;
 				try {
-					s.encoder = new VideoEncoder({ output: (chunk) => { const b = new Uint8Array(chunk.byteLength); chunk.copyTo(b); s.chunks.push(b); s.outputTimes.push(chunk.timestamp); },
+					s.encoder = new VideoEncoder({ output: (chunk) => { const b = new Uint8Array(chunk.byteLength); chunk.copyTo(b); s.chunks.push(b); s.outputTimes.push(chunk.timestamp); s.portal?.video(b); },
 						error: (error) => { rec.note('video: encoder failed: ' + error); s.failed = true; } });
 					s.encoder.configure({ codec: 'avc1.64002A', width, height, framerate: 60, bitrate: options.bitrate ?? 6e6, hardwareAcceleration: options.hardwareAcceleration ?? 'no-preference', latencyMode: 'realtime', avc: { format: 'annexb' } });
 				} catch (error) { rec.note('video: no H.264 encoder: ' + error); s.failed = true; }
@@ -75,9 +75,9 @@ globalThis.FrametapeVideo = { create(rec, options = {}) {
 		});
 	};
 	return {
-		begin() {
+		begin(portal = null) {
 			if (state) throw new Error('already recording');
-			state = self.VideoEncoder && self.VideoFrame ? { encoder: null, failed: false, mapping: [], acceptedTimes: [], outputTimes: [], ring: [], chain: Promise.resolve(), last: null, frames: 0, chunks: [], pending: null } : null;
+			state = self.VideoEncoder && self.VideoFrame ? { encoder: null, failed: false, mapping: [], acceptedTimes: [], outputTimes: [], ring: [], chain: Promise.resolve(), last: null, frames: 0, chunks: [], pending: null, portal } : null;
 			if (!state) { rec.note('video: this browser has no WebCodecs'); return; }
 			// A canvas configured before the hooks above lacks the usage the scaler samples; this runs between frames.
 			const config = rec.canvas && rec.canvas.context.getConfiguration();

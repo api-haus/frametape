@@ -198,3 +198,33 @@ is required by the tools. See [format](docs/format.md) and [delivery evidence](d
 Annotation and bounded encoder code originated in Raycat Engine; Unreal/WebGPU capture and
 review UI originated in the owner's BallRPG project. Extracted first-party code is MIT;
 no private engine, game assets or third-party Box3D implementation is vendored.
+
+## LAN portal
+
+The portal uses the same catalog, video player, frame annotations and agent export as the local reviewer.
+Run `frametape portal RECORDINGS` behind a LAN-restricted HTTPS reverse proxy for
+`tape.api.haus`. The command listens on loopback. Pass SHA-256 verifiers of two independent,
+random credentials through `FRAMETAPE_PORTAL_PASSWORD_SHA256` and `FRAMETAPE_PORTAL_TOKEN_SHA256`.
+Sign in as `owner` with the browser password. The upload token can write takes only.
+Keep both original credentials in the owner's vault.
+
+The owner’s native recorders on the portal machine discover its private runtime socket. For a
+separate LAN device, supply a private IPv4 address as `FRAMETAPE_PORTAL_LAN_IP` and pass its
+`FRAMETAPE_PORTAL_TOKEN` to the recorder process. Remote devices must trust the portal’s TLS
+certificate. The native client resolves HTTPS directly to the configured private address.
+`TapeWriter::create_recording` enables this behavior for new Rust producers.
+`stream_member` follows a growing attachment with the same member name it will have in the
+final bundle. Existing bundle imports use `frametape upload TAKE` for backfill.
+Schedule `frametape sync` with the device’s portal settings to retry native uploads after a
+disconnect or application exit.
+
+Browser producers can use `web/portal.js` to connect a tab to the HTTPS ingest listener
+on the portal's private IPv4 address at port 8443. Allow the recording page’s exact origin in
+`FRAMETAPE_PORTAL_WEB_ORIGINS` and route port 8443 to the portal’s ingest endpoints.
+Feed the resulting transfer to `FrametapeVideo.begin` and `FrametapeBundle.create`.
+The video streams during capture. A link is confirmed once the portal validates and publishes
+the complete recording.
+
+Use **Copy link** in the portal or take the link from the uploader’s confirmation. Local agents
+can run `frametape fetch 'https://tape.api.haus/?take=…' TAKE` through the owner socket, then
+`frametape inspect TAKE --annotations` and `frametape export TAKE OUTPUT --frames 42`.

@@ -11,3 +11,6 @@ repository.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+frametape-transfer.workspace = true

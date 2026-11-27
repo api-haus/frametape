@@ -31,6 +31,16 @@ pub struct Recorder {
 
 impl Recorder {
     pub fn start(path: impl AsRef<Path>, width: u32, height: u32, fps: f64) -> io::Result<Self> {
+        Self::start_streamed(path, width, height, fps, false)
+    }
+
+    pub fn start_streamed(
+        path: impl AsRef<Path>,
+        width: u32,
+        height: u32,
+        fps: f64,
+        streamed: bool,
+    ) -> io::Result<Self> {
         validate_video(width, height, fps)?;
         Self::open(
             path.as_ref(),
@@ -39,6 +49,7 @@ impl Recorder {
             fps,
             &EncoderConfig::default(),
             codec::default_encoder()?,
+            streamed,
         )
     }
 
@@ -49,6 +60,17 @@ impl Recorder {
         fps: f64,
         config: &EncoderConfig,
     ) -> io::Result<Self> {
+        Self::start_with_streamed(path, width, height, fps, config, false)
+    }
+
+    pub fn start_with_streamed(
+        path: impl AsRef<Path>,
+        width: u32,
+        height: u32,
+        fps: f64,
+        config: &EncoderConfig,
+        streamed: bool,
+    ) -> io::Result<Self> {
         validate_video(width, height, fps)?;
         Self::open(
             path.as_ref(),
@@ -57,6 +79,7 @@ impl Recorder {
             fps,
             config,
             negotiate(config)?,
+            streamed,
         )
     }
 
@@ -67,6 +90,7 @@ impl Recorder {
         fps: f64,
         config: &EncoderConfig,
         info: EncoderInfo,
+        streamed: bool,
     ) -> io::Result<Self> {
         let mut command = Command::new(&config.ffmpeg);
         command.args([
@@ -91,7 +115,11 @@ impl Recorder {
             "pipe:0",
         ]);
         info.output_args(&mut command, "pad=ceil(iw/2)*2:ceil(ih/2)*2");
-        command.args(["-movflags", "+faststart"]).arg(path);
+        // Faststart moves every recorded media byte when FFmpeg closes the output.
+        if !streamed {
+            command.args(["-movflags", "+faststart"]);
+        }
+        command.arg(path);
         let child = ChildGuard(
             command
                 .stdin(Stdio::piped())

@@ -2,4 +2,5 @@
 mod catalog;
 pub mod export;
 pub mod media;
+mod portal;
 pub mod server;

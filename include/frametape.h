@@ -10,6 +10,7 @@ extern "C" {
 
 typedef struct ft_session ft_session;
 typedef struct ft_video ft_video;
+typedef struct ft_upload ft_upload;
 
 /* Serialize calls on each handle. Different handles are independent.
  * All strings are UTF-8 and borrowed only for the duration of the call.
@@ -23,6 +24,15 @@ int ft_session_frame(ft_session *, uint64_t frame, uint64_t timestamp_ns, uint64
 /* UINT64_MAX leaves independently sampled events unbound; resolve them by timestamp. */
 int ft_session_event(ft_session *, uint64_t frame, uint64_t timestamp_ns, const char *channel, const char *json);
 int ft_session_attach(ft_session *, const char *channel, const char *path, const char *media_type);
+/* Follow a growing file the session will attach when finalized. */
+int ft_session_stream_attachment(ft_session *, const char *path);
+/* Independent progress handle, retained across ft_session_close. NULL if uploads are disabled. */
+ft_upload *ft_session_upload(ft_session *);
+/* 1 connecting, 2 streaming, 3 finalizing, 4 confirmed, -1 failed, 0 unavailable. */
+int ft_upload_state(ft_upload *);
+/* Confirmed HTTPS link, borrowed until ft_upload_release. */
+const char *ft_upload_url(ft_upload *);
+void ft_upload_release(ft_upload *);
 /* Close always consumes the handle. Failure preserves the journal for recovery. */
 int ft_session_close(ft_session *);
 /* Abort consumes the handle and retains its recoverable journal. */

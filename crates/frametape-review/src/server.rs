@@ -24,11 +24,16 @@ fn script_json(value: &Value) -> String {
         .replace('<', "\\u003c")
         .replace('&', "\\u0026")
 }
-fn header(name: &str, value: &str) -> Header {
+pub(crate) fn header(name: &str, value: &str) -> Header {
     Header::from_bytes(name, value).unwrap()
 }
 
-fn reply(request: Request, status: u16, mime: &str, body: impl Into<Vec<u8>>) -> io::Result<()> {
+pub(crate) fn reply(
+    request: Request,
+    status: u16,
+    mime: &str,
+    body: impl Into<Vec<u8>>,
+) -> io::Result<()> {
     request.respond(Response::from_data(body).with_status_code(StatusCode(status))
         .with_header(header("Content-Type",mime)).with_header(header("Cache-Control","no-store"))
         .with_header(header("X-Content-Type-Options","nosniff"))
@@ -91,8 +96,8 @@ fn file_reply(request: Request, path: &Path, mime: &str) -> io::Result<()> {
 }
 
 #[derive(Clone)]
-struct Library {
-    recordings: Arc<Recordings>,
+pub(crate) struct Library {
+    pub(crate) recordings: Arc<Recordings>,
     cache: PathBuf,
 }
 
@@ -107,8 +112,8 @@ pub struct AppServer {
     workers: Vec<JoinHandle<()>>,
 }
 
-fn library(path: &Path) -> io::Result<Library> {
-    let recordings = Arc::new(Recordings::open(path)?);
+pub(crate) fn library(path: &Path, portal: bool) -> io::Result<Library> {
+    let recordings = Arc::new(Recordings::open(path, portal)?);
     let cache_home = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
@@ -138,7 +143,7 @@ fn selection_query(library: &Library) -> String {
 
 impl AppServer {
     pub fn start(path: PathBuf, port: u16) -> io::Result<Self> {
-        let initial = library(&path)?;
+        let initial = library(&path, false)?;
         let server = Arc::new(Server::http(("127.0.0.1", port)).map_err(io::Error::other)?);
         let address = server
             .server_addr()
@@ -227,7 +232,7 @@ impl AppServer {
         })
     }
     pub fn open(&self, path: &Path) -> io::Result<String> {
-        let next = library(path)?;
+        let next = library(path, false)?;
         let url = self.origin.clone() + &self.prefix + &selection_query(&next);
         *self
             .library
@@ -277,7 +282,7 @@ pub fn serve(path: PathBuf, port: u16, no_open: bool) -> io::Result<()> {
     Ok(())
 }
 
-fn handle(mut request: Request, route: &str, library: &Library) -> io::Result<()> {
+pub(crate) fn handle(mut request: Request, route: &str, library: &Library) -> io::Result<()> {
     if request.method() != &Method::Get && request.method() != &Method::Post {
         return reply(request, 405, "text/plain", "method not allowed");
     }
@@ -513,3 +518,5 @@ fn handle(mut request: Request, route: &str, library: &Library) -> io::Result<()
         Err(error) => reply(request, 422, "text/plain", error.to_string()),
     }
 }
+
+pub use crate::portal::serve as serve_portal;

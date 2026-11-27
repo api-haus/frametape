@@ -793,6 +793,7 @@ dependencies = [
 name = "frametape"
 version = "0.1.0"
 dependencies = [
+ "frametape-transfer",
  "serde",
  "serde_json",
  "zip",
@@ -870,7 +871,20 @@ dependencies = [
  "getrandom",
  "resvg",
  "serde_json",
+ "subtle",
  "tiny_http",
+]
+
+[[package]]
+name = "frametape-transfer"
+version = "0.1.0"
+dependencies = [
+ "getrandom",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "zip",
 ]
 
 [[package]]
@@ -1239,6 +1253,12 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "html5ever"
@@ -2545,6 +2565,12 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "subtle"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "svgtypes"

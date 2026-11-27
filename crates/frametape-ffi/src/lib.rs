@@ -50,6 +50,11 @@ unsafe fn handle<'a, T>(pointer: *mut T) -> io::Result<&'a mut T> {
 pub struct Session {
     writer: TapeWriter,
     output: PathBuf,
+    streaming: Option<PathBuf>,
+}
+pub struct Upload {
+    status: frametape::transfer::Status,
+    url: CString,
 }
 pub struct Video {
     recorder: Recorder,
@@ -141,8 +146,12 @@ pub unsafe extern "C" fn ft_session_open(
         journal.push(".recording");
         let metadata =
             serde_json::from_str(unsafe { text(metadata)? }).map_err(io::Error::other)?;
-        let writer = TapeWriter::create(PathBuf::from(journal), metadata)?;
-        Ok(Box::into_raw(Box::new(Session { writer, output })))
+        let writer = TapeWriter::create_recording(PathBuf::from(journal), metadata)?;
+        Ok(Box::into_raw(Box::new(Session {
+            writer,
+            output,
+            streaming: None,
+        })))
     })
 }
 
@@ -204,17 +213,95 @@ pub unsafe extern "C" fn ft_session_attach(
     media_type: *const c_char,
 ) -> c_int {
     status(|| {
-        let writer = &mut unsafe { handle(session)? }.writer;
+        let session = unsafe { handle(session)? };
+        let writer = &mut session.writer;
         let channel = unsafe { text(channel)? };
         let source = PathBuf::from(unsafe { text(path)? });
         let filename = source
             .file_name()
             .and_then(|s| s.to_str())
             .ok_or_else(|| io::Error::other("invalid attachment filename"))?;
-        let name = format!("{}-{filename}", writer.manifest().attachments.len());
+        let name = if session.streaming.as_ref() == Some(&source) {
+            format!("capture-{filename}")
+        } else {
+            format!("{}-{filename}", writer.manifest().attachments.len())
+        };
         register(writer, channel)?;
         writer.attach(channel, &name, source, unsafe { text(media_type)? })
     })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ft_session_stream_attachment(
+    session: *mut Session,
+    path: *const c_char,
+) -> c_int {
+    status(|| {
+        let session = unsafe { handle(session)? };
+        let path = std::path::Path::new(unsafe { text(path)? });
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| io::Error::other("invalid attachment filename"))?;
+        if session.writer.upload_status().is_some() {
+            session
+                .writer
+                .stream_member(&format!("attachments/capture-{filename}"), path);
+            session.streaming = Some(path.into());
+        }
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ft_session_upload(session: *mut Session) -> *mut Upload {
+    call(|| {
+        Ok(unsafe { handle(session)? }.writer.upload_status().map_or(
+            std::ptr::null_mut(),
+            |status| {
+                Box::into_raw(Box::new(Upload {
+                    status,
+                    url: CString::default(),
+                }))
+            },
+        ))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ft_upload_state(upload: *mut Upload) -> c_int {
+    use frametape::transfer::Progress;
+    call(|| {
+        let upload = unsafe { handle(upload)? };
+        Ok(match upload.status.get() {
+            Progress::Connecting => 1,
+            Progress::Streaming { .. } => 2,
+            Progress::Finalizing => 3,
+            Progress::Confirmed { url } => {
+                if upload.url.as_bytes().is_empty() {
+                    upload.url = CString::new(url).map_err(io::Error::other)?;
+                }
+                4
+            }
+            Progress::Paused { .. } | Progress::Failed { .. } => -1,
+        })
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ft_upload_url(upload: *mut Upload) -> *const c_char {
+    if unsafe { ft_upload_state(upload) } == 4 {
+        unsafe { handle(upload) }.unwrap().url.as_ptr()
+    } else {
+        std::ptr::null()
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ft_upload_release(upload: *mut Upload) {
+    if !upload.is_null() {
+        drop(unsafe { Box::from_raw(upload) });
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -223,7 +310,7 @@ pub unsafe extern "C" fn ft_session_close(session: *mut Session) -> c_int {
         if session.is_null() {
             return Err(io::Error::other("null handle"));
         }
-        let Session { writer, output } = *unsafe { Box::from_raw(session) };
+        let Session { writer, output, .. } = *unsafe { Box::from_raw(session) };
         writer.finish(output)?;
         Ok(())
     })
@@ -252,7 +339,15 @@ pub unsafe extern "C" fn ft_video_open(
         if !["rgba", "bgra", "rgb0", "bgr0", "x2bgr10le"].contains(&format.as_str()) {
             return Err(io::Error::other("unsupported pixel format"));
         }
-        let recorder = Recorder::start(unsafe { text(path)? }, width, height, f64::from(fps))?;
+        let streamed =
+            frametape::transfer::Client::configured().is_ok_and(|client| client.is_some());
+        let recorder = Recorder::start_streamed(
+            unsafe { text(path)? },
+            width,
+            height,
+            f64::from(fps),
+            streamed,
+        )?;
         Ok(Box::into_raw(Box::new(Video {
             recorder,
             width,

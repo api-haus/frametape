@@ -8,8 +8,9 @@
     const safe = (name) => typeof name === 'string' && name.length && !/[\\:\0]/.test(name) && name.split('/').every((p) => p && p !== '.' && p !== '..');
     const lines = (values) => utf8.encode(values.map((v) => JSON.stringify(v) + '\n').join(''));
 
-    async function create({ metadata = {}, frames = [], events = [], channels = [], attachments = [], annotations = null }) {
+    async function create({ metadata = {}, frames = [], events = [], channels = [], attachments = [], annotations = null, portal = null }) {
         if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new TypeError('metadata must be an object');
+        if (portal?.device && !metadata.device) metadata = { ...metadata, device: portal.device };
         const registered = new Map(channels.map((c) => [c.id, c]));
         const register = (id, schema) => {
             if (typeof id !== 'string' || !id.length) throw new TypeError('channel id required');
@@ -33,10 +34,12 @@
             const path = 'attachments/' + a.name;
             members.push([path, data]); descriptors.push({ channel: a.channel, path, media_type: a.media_type, bytes: data.length });
         }
-        const manifest = { format: 'frametape', version: 1, id: crypto.randomUUID(), created_unix_ns: Date.now() * 1e6, metadata, channels: [...registered.values()], attachments: descriptors, frame_count: frames.length, event_count: events.length, duration_ns: duration };
+        const manifest = { format: 'frametape', version: 1, id: portal?.id ?? crypto.randomUUID(), created_unix_ns: Date.now() * 1e6, metadata, channels: [...registered.values()], attachments: descriptors, frame_count: frames.length, event_count: events.length, duration_ns: duration };
         members.unshift(['manifest.json', utf8.encode(JSON.stringify(manifest))], ['frames.jsonl', lines(frames)], ['events.jsonl', lines(events)]);
         if (annotations) members.push(['annotations.json', utf8.encode(JSON.stringify(annotations))]);
-        return zip(members);
+        const bundle = zip(members);
+        portal?.finish(members);
+        return bundle;
     }
 
     function zip(members) {

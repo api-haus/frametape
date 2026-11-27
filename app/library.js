@@ -1,7 +1,7 @@
 export const size=n=>n>=1e9?(n/1e9).toFixed(1)+' GB':n>=1e6?(n/1e6).toFixed(1)+' MB':(n/1e3).toFixed(1)+' KB';
 
 function matches(row,needle){
-  return [row.name,...(row.labels||[]),...(row.manifest?.channels||[]).map(c=>c.id)].join(' ').toLowerCase().includes(needle);
+  return [row.name,row.manifest?.metadata?.host,row.manifest?.metadata?.project,row.manifest?.metadata?.device,...(row.labels||[]),...(row.manifest?.channels||[]).map(c=>c.id)].join(' ').toLowerCase().includes(needle);
 }
 const recorded=row=>row.manifest?.created_unix_ns||row.modified_ms*1e6;
 const compare={

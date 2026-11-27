@@ -4,6 +4,8 @@ async function json(path,options){const response=await fetch(new URL(path,base),
 export const host={
   saveMode:'recording',
   canOpen:!!window.frametapeNative,
+  portal: document.documentElement.dataset.portal === 'true',
+  uploads:()=>json('uploading'),
   selectedId:new URL(location.href).searchParams.get('take'),
   list:()=>json('catalog'),
   record:id=>json('record/'+encodeURIComponent(id)),

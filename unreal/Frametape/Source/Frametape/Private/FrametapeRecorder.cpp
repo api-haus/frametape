@@ -213,8 +213,10 @@ struct FFrametapeRecorder::FImpl
     TSharedPtr<FVideo, ESPMode::ThreadSafe> Video;
     TSharedPtr<FInput> Input;
     FString ArchivePath;
+    ft_upload* Upload = nullptr;
     FDelegateHandle PreExit;
     uint64 CompletedVideoFrames = 0;
+    ~FImpl() { ft_upload_release(Upload); }
 };
 
 FFrametapeRecorder::FFrametapeRecorder() : Impl(MakeUnique<FImpl>()) {}
@@ -258,6 +260,8 @@ bool FFrametapeRecorder::Start(const FString& Path, const FString& Metadata, con
     IFileManager::Get().MakeDirectory(*FPaths::GetPath(Impl->ArchivePath), true);
     Impl->Session->Handle = ft_session_open(TCHAR_TO_UTF8(*Impl->ArchivePath), TCHAR_TO_UTF8(*ActualMetadata));
     if (!Impl->Session->Handle) { Impl->Session->Failed(); return false; }
+    ft_upload_release(Impl->Upload);
+    Impl->Upload = ft_session_upload(Impl->Session->Handle);
     Impl->PreExit = FCoreDelegates::OnEnginePreExit.AddLambda([this] { if (IsRecording()) Stop(); });
     if (Options.bInput)
     {
@@ -269,6 +273,7 @@ bool FFrametapeRecorder::Start(const FString& Path, const FString& Metadata, con
         Impl->Video = MakeShared<FVideo, ESPMode::ThreadSafe>(Impl->Session);
         Impl->Video->Window = Window;
         Impl->Video->Path = FPaths::ChangeExtension(Impl->ArchivePath, TEXT("mp4"));
+        ft_session_stream_attachment(Impl->Session->Handle, TCHAR_TO_UTF8(*Impl->Video->Path));
         Impl->Video->Fps = Options.VideoFps;
         const auto Video = Impl->Video.ToSharedRef();
         Video->Presented = FSlateApplication::Get().GetRenderer()->OnBackBufferReadyToPresent().AddLambda([Video](SWindow& W, ISlateViewportProvider& P) { Video->OnPresent(W, P); });
@@ -370,6 +375,26 @@ bool FFrametapeRecorder::Stop()
 }
 
 bool FFrametapeRecorder::IsRecording() const { return Impl->Session->Handle != nullptr; }
+FText FFrametapeRecorder::RecordingBadge() const
+{
+    const int State = Impl->Upload ? ft_upload_state(Impl->Upload) : 0;
+    if (IsRecording())
+    {
+        if (State == 2) return NSLOCTEXT("Frametape", "Streaming", "● REC · streaming");
+        if (State == -1) return NSLOCTEXT("Frametape", "UploadPaused", "● REC · upload paused");
+        if (State == 1) return NSLOCTEXT("Frametape", "Connecting", "● REC · connecting");
+        return NSLOCTEXT("Frametape", "Recording", "● REC");
+    }
+    if (State >= 1 && State <= 3) return NSLOCTEXT("Frametape", "Uploading", "Uploading take…");
+    if (State == 4) return NSLOCTEXT("Frametape", "Confirmed", "Take on portal");
+    if (State == -1) return NSLOCTEXT("Frametape", "UploadFailed", "Portal upload failed");
+    return FText::GetEmpty();
+}
+FString FFrametapeRecorder::PortalLink() const
+{
+    const char* Link = Impl->Upload ? ft_upload_url(Impl->Upload) : nullptr;
+    return Link ? UTF8_TO_TCHAR(Link) : FString();
+}
 uint64 FFrametapeRecorder::VideoFrames() const { return Impl->Video ? Impl->Video->Accepted.load(std::memory_order_relaxed) : Impl->CompletedVideoFrames; }
 FString FFrametapeRecorder::Error() const { FScopeLock Lock(&Impl->Session->Mutex); return Impl->Session->Failure; }
 

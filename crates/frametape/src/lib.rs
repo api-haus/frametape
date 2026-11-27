@@ -3,6 +3,8 @@ pub mod annotations;
 pub mod import;
 pub mod playback;
 pub use annotations::*;
+#[cfg(not(target_arch = "wasm32"))]
+pub use frametape_transfer as transfer;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -78,14 +80,48 @@ pub struct TapeWriter {
     frames: BufWriter<File>,
     events: BufWriter<File>,
     last_timestamp: Option<u64>,
+    #[cfg(not(target_arch = "wasm32"))]
+    transfer: Option<transfer::Transfer>,
 }
 
 impl TapeWriter {
     pub fn create(directory: impl AsRef<Path>, metadata: Value) -> Result<Self> {
+        Self::create_journal(directory.as_ref(), metadata, None)
+    }
+
+    /// Create a capture journal and attach the configured LAN uploader.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn create_recording(directory: impl AsRef<Path>, mut metadata: Value) -> Result<Self> {
+        if metadata.is_object()
+            && metadata.get("device").is_none()
+            && transfer::Client::configured().transpose().is_some()
+        {
+            let name = std::env::var("FRAMETAPE_DEVICE")
+                .ok()
+                .or_else(|| std::env::var("COMPUTERNAME").ok())
+                .or_else(|| std::env::var("HOSTNAME").ok())
+                .or_else(|| fs::read_to_string("/etc/hostname").ok());
+            if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
+                metadata["device"] = Value::String(name.trim().to_owned());
+            }
+        }
+        let mut writer = Self::create_journal(
+            directory.as_ref(),
+            metadata,
+            Some(transfer::unique_recording_id()?),
+        )?;
+        writer.transfer = transfer::Transfer::start(&writer.manifest.id);
+        for name in ["manifest.json", "frames.jsonl", "events.jsonl"] {
+            writer.stream_member(name, &writer.directory.join(name));
+        }
+        Ok(writer)
+    }
+
+    fn create_journal(directory: &Path, metadata: Value, id: Option<String>) -> Result<Self> {
         if !metadata.is_object() {
             return Err(invalid("metadata must be a JSON object"));
         }
-        let directory = directory.as_ref().to_owned();
+        let directory = directory.to_owned();
         fs::create_dir(&directory)?;
         let lock = File::create(directory.join(".lock"))?;
         lock.try_lock().map_err(invalid)?;
@@ -100,7 +136,7 @@ impl TapeWriter {
             manifest: Manifest {
                 format: "frametape".into(),
                 version: 1,
-                id: format!("{created_unix_ns:x}-{:x}", std::process::id()),
+                id: id.unwrap_or_else(|| format!("{created_unix_ns:x}-{:x}", std::process::id())),
                 created_unix_ns,
                 metadata,
                 channels: vec![],
@@ -111,9 +147,24 @@ impl TapeWriter {
             },
             directory,
             last_timestamp: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            transfer: None,
         };
         writer.save_manifest()?;
         Ok(writer)
+    }
+
+    /// Follow a producer-owned file during capture. The sealed bundle is authoritative.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn stream_member(&self, name: &str, path: &Path) {
+        if let Some(transfer) = &self.transfer {
+            transfer.source(name, path);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn upload_status(&self) -> Option<transfer::Status> {
+        self.transfer.as_ref().map(transfer::Transfer::status)
     }
 
     pub fn directory(&self) -> &Path {
@@ -241,8 +292,14 @@ impl TapeWriter {
             lock,
             frames,
             events,
+            #[cfg(not(target_arch = "wasm32"))]
+            transfer,
             ..
         } = self;
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(transfer) = transfer {
+            transfer.finish(output.as_ref());
+        }
         drop(frames);
         drop(events);
         let mut folders = std::collections::BTreeSet::new();
@@ -323,6 +380,11 @@ fn options(name: &str, size: u64) -> SimpleFileOptions {
     SimpleFileOptions::default()
         .compression_method(method)
         .large_file(size > u32::MAX as u64)
+}
+
+/// Seal a received journal with the same bundle representation as a local take.
+pub fn seal_journal(directory: &Path, members: &[String], output: &Path) -> Result<()> {
+    seal(directory, members, output)
 }
 
 fn seal(directory: &Path, members: &[String], output: &Path) -> Result<()> {

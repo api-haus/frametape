@@ -28,6 +28,8 @@ public:
     // Drains GPU readbacks and encoding before closing the archive; returns errors instead of copying stale video.
     bool Stop();
     bool IsRecording() const;
+    FText RecordingBadge() const;
+    FString PortalLink() const;
     // Accepted pictures, finalized when Stop succeeds; independent of logical frame count.
     uint64 VideoFrames() const;
     FString Error() const;

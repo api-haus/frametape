@@ -16,11 +16,12 @@ pub(crate) fn id(path: &Path) -> String {
 pub(crate) struct Recordings {
     pub root: PathBuf,
     pub selected: Option<(String, PathBuf)>,
+    portal: bool,
     paths: RwLock<Option<HashMap<String, PathBuf>>>,
 }
 
 impl Recordings {
-    pub fn open(path: &Path) -> io::Result<Self> {
+    pub fn open(path: &Path, portal: bool) -> io::Result<Self> {
         let path = fs::canonicalize(path)?;
         let stat = fs::metadata(&path)?;
         let (root, selected) = if stat.is_dir() {
@@ -36,6 +37,7 @@ impl Recordings {
         Ok(Self {
             root,
             selected,
+            portal,
             paths: RwLock::default(),
         })
     }
@@ -47,7 +49,15 @@ impl Recordings {
             let entry = entry?;
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "ftape") && entry.file_type()?.is_file() {
-                let id = id(&path);
+                let id = if self.portal {
+                    let name = path.file_stem().unwrap().to_string_lossy();
+                    if !frametape::transfer::valid_id(&name) {
+                        continue;
+                    }
+                    name.into_owned()
+                } else {
+                    id(&path)
+                };
                 rows.push(file_info(&id, &path));
                 paths.insert(id, path);
             }
@@ -60,6 +70,15 @@ impl Recordings {
     }
 
     pub fn resolve(&self, id: &str) -> io::Result<Option<PathBuf>> {
+        if self.portal {
+            if !frametape::transfer::valid_id(id) {
+                return Ok(None);
+            }
+            let path = self.root.join(format!("{id}.ftape"));
+            return Ok(fs::symlink_metadata(&path)
+                .is_ok_and(|stat| stat.is_file())
+                .then_some(path));
+        }
         if let Some((selected, path)) = &self.selected
             && selected == id
         {
@@ -112,6 +131,17 @@ pub(crate) fn detail(id: &str, path: &Path) -> Value {
         let inspected = (|| -> io::Result<()> {
             let mut tape = TapeReader::open(path)?;
             let annotations = tape.annotations()?;
+            if frametape::transfer::valid_id(id) {
+                for field in ["title", "project", "host"] {
+                    if let Some(value) = tape.manifest.metadata[field]
+                        .as_str()
+                        .filter(|value| !value.is_empty())
+                    {
+                        row["name"] = json!(value);
+                        break;
+                    }
+                }
+            }
             row["manifest"] = serde_json::to_value(&tape.manifest).map_err(io::Error::other)?;
             row["labels"] = json!(
                 annotations

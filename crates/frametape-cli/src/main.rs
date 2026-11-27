@@ -48,6 +48,18 @@ enum Command {
     },
     /// Open the entirely browser-local reviewer; no recording server or uploads.
     Web,
+    /// Serve the password-protected LAN catalog behind a local HTTPS reverse proxy.
+    Portal {
+        root: PathBuf,
+        #[arg(long, default_value_t = 8079)]
+        port: u16,
+    },
+    /// Retry uploading a finalized local recording.
+    Upload { path: PathBuf },
+    /// Retry native uploads queued while the LAN was unavailable.
+    Sync,
+    /// Download an authenticated portal link for local inspection or frame export.
+    Fetch { link: String, output: PathBuf },
     /// Print manifest, channel data or annotations as JSON.
     Inspect {
         path: PathBuf,
@@ -102,6 +114,22 @@ fn main() {
 
 fn run(cli: Cli) -> io::Result<()> {
     match cli.command {
+        Command::Portal { root, port } => frametape_review::server::serve_portal(root, port),
+        Command::Sync => frametape::transfer::retry_pending(),
+        Command::Upload { path } => {
+            let tape = frametape::TapeReader::open(&path)?;
+            println!(
+                "{}",
+                frametape::transfer::upload_file(&path, &tape.manifest.id)?
+            );
+            Ok(())
+        }
+        Command::Fetch { link, output } => {
+            let id = link
+                .strip_prefix("https://tape.api.haus/?take=")
+                .ok_or_else(|| io::Error::other("expected a tape.api.haus recording link"))?;
+            frametape::transfer::Client::owner()?.fetch(id, &output)
+        }
         #[cfg(target_os = "linux")]
         Command::Record(options) => record::record(options),
         #[cfg(target_os = "linux")]

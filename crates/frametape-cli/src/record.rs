@@ -340,7 +340,7 @@ fn descendant(mut pid: u32, ancestor: u32) -> bool {
     false
 }
 
-fn notify(title: &str, body: &str) {
+pub(crate) fn notify(title: &str, body: &str) {
     let shown = Command::new("notify-send")
         .args(["--app-name=Frametape", title, body])
         .output()
@@ -464,7 +464,12 @@ pub fn record(options: Options) -> io::Result<()> {
             }
         })
     } else {
-        notify("Recording window", description);
+        let title = if frametape::transfer::Client::configured().is_ok_and(|c| c.is_some()) {
+            "REC · streaming"
+        } else {
+            "Recording window"
+        };
+        notify(title, description);
         let output = options.capture.output.clone();
         let capture_target = match &target {
             Some(window) => CaptureTarget::Window(window.handle()?),
@@ -488,7 +493,8 @@ pub fn record(options: Options) -> io::Result<()> {
         lease.preserve = false;
     }
     match &result {
-        Ok(()) => notify("Recording saved", &path.display().to_string()),
+        Ok(()) if native => notify("Recording saved", &path.display().to_string()),
+        Ok(()) => (),
         Err(e) => notify("Recording failed; journal retained", &e.to_string()),
     }
     result

@@ -66,7 +66,7 @@ pub fn record(
         vaapi_device: options.vaapi_device,
         ..Default::default()
     };
-    let mut writer = TapeWriter::create(
+    let mut writer = TapeWriter::create_recording(
         &journal,
         json!({"host":"desktop","target":metadata,"output":screen.name,"clock":"CLOCK_MONOTONIC","video_fps":options.fps,"capture":"wayland-shm","input_scope":"desktop-global"}),
     )?;
@@ -82,12 +82,15 @@ pub fn record(
     })?;
     let first = screen.capture()?;
     let video_path = journal.join("capture.mp4");
-    let mut encoder = Recorder::start_with(
+    let upload = writer.upload_status();
+    writer.stream_member("attachments/capture.mp4", &video_path);
+    let mut encoder = Recorder::start_with_streamed(
         &video_path,
         first.width,
         first.height,
         f64::from(options.fps),
         &config,
+        upload.is_some(),
     )?;
     let epoch = monotonic_ns()?;
     let input_path = journal.join("input.events.jsonl");
@@ -185,6 +188,21 @@ pub fn record(
     writer.attach("video", "capture.mp4", &video_path, "video/mp4")?;
     std::fs::remove_file(&video_path)?;
     let path = writer.finish(path)?;
-    println!("{}", std::path::absolute(path)?.display());
+    println!("{}", std::path::absolute(&path)?.display());
+    if let Some(upload) = upload {
+        super::record::notify("Uploading recording", "Waiting for portal confirmation");
+        match upload.wait() {
+            frametape::transfer::Progress::Confirmed { url } => {
+                eprintln!("{url}");
+                super::record::notify("Recording on portal", &url);
+            }
+            frametape::transfer::Progress::Failed { error } => {
+                super::record::notify("Local recording saved · upload failed", &error)
+            }
+            _ => unreachable!(),
+        }
+    } else {
+        super::record::notify("Recording saved", &path.display().to_string());
+    }
     Ok(())
 }
