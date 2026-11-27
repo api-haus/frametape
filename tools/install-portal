@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ $# != 1 || ! -x "$1" ]]; then
+    echo "Usage: tools/install-portal /path/to/frametape" >&2
+    exit 2
+fi
+
+destination="$HOME/.local/bin"
+units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+mkdir -p "$destination" "$units"
+install -m 755 "$1" "$destination/.frametape-portal.new"
+mv -f "$destination/.frametape-portal.new" "$destination/frametape-portal"
+
+cat > "$units/frametape-portal.service" <<'SERVICE'
+[Unit]
+Description=Frametape LAN portal
+ConditionPathExists=%E/frametape/portal-verifiers
+
+[Service]
+Type=simple
+EnvironmentFile=%E/frametape/portal-verifiers
+ExecStart=%h/.local/bin/frametape-portal portal %h/Videos/Frametape/Portal
+UMask=0077
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+SERVICE
+cat > "$units/frametape-sync.service" <<'SERVICE'
+[Unit]
+Description=Retry pending Frametape uploads
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/frametape-portal sync
+UMask=0077
+SERVICE
+cat > "$units/frametape-sync.timer" <<'TIMER'
+[Unit]
+Description=Retry pending Frametape uploads once a minute
+
+[Timer]
+OnStartupSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+TIMER
+systemctl --user daemon-reload
+systemctl --user enable --now frametape-portal.service frametape-sync.timer
